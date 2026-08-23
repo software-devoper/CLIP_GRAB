@@ -239,13 +239,14 @@ export function AudioPreviewPlayer({ metadata, videoUrl }: AudioPreviewPlayerPro
   // Waveform heights for animated visualizer
   const waveHeights = [24, 45, 78, 92, 60, 35, 70, 85, 95, 50, 65, 80, 40, 90, 75, 55, 30, 88, 62, 44, 98, 72, 50, 82];
 
+  // Direct Playable Audio Downloads Row
   return (
     <div
       id="audio-preview-player"
-      className="p-5 sm:p-6 rounded-2xl bg-zinc-900 border border-zinc-800 text-white space-y-6 shadow-xl relative overflow-hidden"
+      className="p-5 sm:p-6 rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-900 dark:text-white space-y-6 shadow-xl relative overflow-hidden transition-colors"
     >
       {/* Background Glow */}
-      <div className="absolute top-0 right-0 w-96 h-96 bg-red-600/5 rounded-full blur-3xl pointer-events-none -mr-20 -mt-20" />
+      <div className="absolute top-0 right-0 w-96 h-96 bg-red-600/5 dark:bg-red-600/10 rounded-full blur-3xl pointer-events-none -mr-20 -mt-20" />
 
       {/* Hidden YouTube Audio IFrame */}
       <iframe
@@ -257,40 +258,40 @@ export function AudioPreviewPlayer({ metadata, videoUrl }: AudioPreviewPlayerPro
       />
 
       {/* Header with Telemetry & Active Status */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-zinc-800/80 pb-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-zinc-100 dark:border-zinc-800/80 pb-4">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-red-600/10 border border-red-500/30 flex items-center justify-center text-red-500 shrink-0">
+          <div className="w-10 h-10 rounded-xl bg-red-600/10 border border-red-500/30 flex items-center justify-center text-red-600 dark:text-red-500 shrink-0">
             <Radio className="w-5 h-5 animate-pulse" />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <span className="text-[10px] font-mono font-bold uppercase tracking-widest text-red-400 bg-red-950/80 px-2 py-0.5 rounded border border-red-800/50">
+              <span className="text-[10px] font-mono font-bold uppercase tracking-widest text-red-700 dark:text-red-400 bg-red-100 dark:bg-red-950/80 px-2 py-0.5 rounded border border-red-200 dark:border-red-800/50">
                 AUDIO MASTERING & PREVIEW
               </span>
-              <span className="inline-flex items-center gap-1 text-[10px] font-mono text-emerald-400">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+              <span className="inline-flex items-center gap-1 text-[10px] font-mono text-emerald-600 dark:text-emerald-400">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
                 STREAM READY
               </span>
             </div>
-            <h3 className="text-base font-bold text-white tracking-tight line-clamp-1 mt-0.5">
+            <h3 className="text-base font-bold text-zinc-950 dark:text-white tracking-tight line-clamp-1 mt-0.5">
               {metadata.title}
             </h3>
           </div>
         </div>
 
         {/* Spec Badges */}
-        <div className="flex items-center gap-2 font-mono text-[11px] text-zinc-400">
-          <span className="px-2 py-1 bg-zinc-800/80 rounded border border-zinc-700/50">
+        <div className="flex items-center gap-2 font-mono text-[11px] text-zinc-500 dark:text-zinc-400">
+          <span className="px-2 py-1 bg-zinc-100 dark:bg-zinc-800/80 rounded border border-zinc-200 dark:border-zinc-700/50">
             MP3 320 KBPS
           </span>
-          <span className="px-2 py-1 bg-zinc-800/80 rounded border border-zinc-700/50">
+          <span className="px-2 py-1 bg-zinc-100 dark:bg-zinc-800/80 rounded border border-zinc-200 dark:border-zinc-700/50">
             44.1 KHZ STEREO
           </span>
         </div>
       </div>
 
       {/* Animated Waveform Visualizer */}
-      <div className="bg-zinc-950/80 rounded-xl p-4 border border-zinc-800/80 flex items-center justify-between gap-1 h-20 overflow-hidden relative">
+      <div className="bg-zinc-100 dark:bg-zinc-950/80 rounded-xl p-4 border border-zinc-200 dark:border-zinc-800/80 flex items-center justify-between gap-1 h-20 overflow-hidden relative">
         <div className="absolute inset-0 bg-gradient-to-r from-red-600/10 via-transparent to-red-600/10 opacity-30 pointer-events-none" />
         {waveHeights.map((h, i) => {
           const progressPercent = (currentTime / duration) * 100;
@@ -305,8 +306,8 @@ export function AudioPreviewPlayer({ metadata, videoUrl }: AudioPreviewPlayerPro
               <div
                 className={`w-full max-w-[8px] rounded-full transition-all duration-150 ${
                   isPassed
-                    ? 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)]'
-                    : 'bg-zinc-800'
+                    ? 'bg-red-600 dark:bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)]'
+                    : 'bg-zinc-300 dark:bg-zinc-800'
                 }`}
                 style={{
                   height: isPlaying
@@ -329,11 +330,11 @@ export function AudioPreviewPlayer({ metadata, videoUrl }: AudioPreviewPlayerPro
           value={currentTime}
           onChange={handleSeek}
           aria-label="Audio scrubber"
-          className="w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-red-500 hover:accent-red-400 transition-colors"
+          className="w-full h-1.5 bg-zinc-200 dark:bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-red-600 dark:accent-red-500 hover:accent-red-500 transition-colors"
         />
-        <div className="flex items-center justify-between text-[11px] font-mono text-zinc-400">
+        <div className="flex items-center justify-between text-[11px] font-mono text-zinc-500 dark:text-zinc-400">
           <span>{formatTime(currentTime)}</span>
-          <span className="text-zinc-600 uppercase tracking-wider text-[10px]">
+          <span className="text-zinc-400 dark:text-zinc-600 uppercase tracking-wider text-[10px]">
             {isPlaying ? 'PLAYING AUDIO STREAM' : 'PAUSED'}
           </span>
           <span>{formatTime(duration)}</span>
@@ -346,7 +347,7 @@ export function AudioPreviewPlayer({ metadata, videoUrl }: AudioPreviewPlayerPro
         <div className="flex items-center gap-2 sm:gap-3">
           <button
             onClick={() => handleSkip(-10)}
-            className="p-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white transition-colors border border-zinc-700/50"
+            className="p-2.5 rounded-xl bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 hover:text-zinc-950 dark:hover:text-white transition-colors border border-zinc-200 dark:border-zinc-700/50"
             title="Rewind 10 seconds"
             aria-label="Rewind 10 seconds"
           >
@@ -355,7 +356,7 @@ export function AudioPreviewPlayer({ metadata, videoUrl }: AudioPreviewPlayerPro
 
           <button
             onClick={handleTogglePlay}
-            className="px-6 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold font-mono text-sm tracking-wider uppercase flex items-center gap-2.5 shadow-lg shadow-red-900/30 active:scale-95 transition-all"
+            className="px-6 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold font-mono text-sm tracking-wider uppercase flex items-center gap-2.5 shadow-lg shadow-red-900/20 active:scale-95 transition-all"
             title={isPlaying ? 'Pause Audio' : 'Play Audio'}
             aria-label={isPlaying ? 'Pause Audio' : 'Play Audio'}
           >
@@ -374,7 +375,7 @@ export function AudioPreviewPlayer({ metadata, videoUrl }: AudioPreviewPlayerPro
 
           <button
             onClick={() => handleSkip(10)}
-            className="p-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white transition-colors border border-zinc-700/50"
+            className="p-2.5 rounded-xl bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 hover:text-zinc-950 dark:hover:text-white transition-colors border border-zinc-200 dark:border-zinc-700/50"
             title="Forward 10 seconds"
             aria-label="Forward 10 seconds"
           >
@@ -383,15 +384,15 @@ export function AudioPreviewPlayer({ metadata, videoUrl }: AudioPreviewPlayerPro
         </div>
 
         {/* Speed Controls */}
-        <div className="flex items-center gap-1 bg-zinc-950 p-1 rounded-xl border border-zinc-800">
+        <div className="flex items-center gap-1 bg-zinc-100 dark:bg-zinc-950 p-1 rounded-xl border border-zinc-200 dark:border-zinc-800">
           {[0.75, 1.0, 1.25, 1.5, 2.0].map((spd) => (
             <button
               key={spd}
               onClick={() => handleSpeedChange(spd)}
               className={`px-2 py-1 rounded text-[10px] font-mono font-bold transition-colors ${
                 playbackSpeed === spd
-                  ? 'bg-zinc-800 text-red-400 shadow-sm'
-                  : 'text-zinc-500 hover:text-zinc-300'
+                  ? 'bg-white dark:bg-zinc-800 text-red-600 dark:text-red-400 shadow-xs'
+                  : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-300'
               }`}
             >
               {spd}x
@@ -403,12 +404,12 @@ export function AudioPreviewPlayer({ metadata, videoUrl }: AudioPreviewPlayerPro
         <div className="flex items-center gap-2">
           <button
             onClick={handleToggleMute}
-            className="p-2 text-zinc-400 hover:text-white transition-colors"
+            className="p-2 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white transition-colors"
             title={isMuted ? 'Unmute' : 'Mute'}
             aria-label={isMuted ? 'Unmute' : 'Mute'}
           >
             {isMuted || volume === 0 ? (
-              <VolumeX className="w-4 h-4 text-red-400" />
+              <VolumeX className="w-4 h-4 text-red-500" />
             ) : (
               <Volume2 className="w-4 h-4" />
             )}
@@ -420,16 +421,16 @@ export function AudioPreviewPlayer({ metadata, videoUrl }: AudioPreviewPlayerPro
             value={isMuted ? 0 : volume}
             onChange={handleVolumeChange}
             aria-label="Audio volume"
-            className="w-20 sm:w-24 h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-red-500"
+            className="w-20 sm:w-24 h-1 bg-zinc-200 dark:bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-red-600 dark:accent-red-500"
           />
         </div>
       </div>
 
       {/* Direct Playable Audio Downloads Row */}
-      <div className="pt-4 border-t border-zinc-800/80 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+      <div className="pt-4 border-t border-zinc-100 dark:border-zinc-800/80 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
         <div className="space-y-0.5">
-          <div className="text-xs font-mono font-bold uppercase tracking-wider text-zinc-200 flex items-center gap-1.5">
-            <Music className="w-3.5 h-3.5 text-red-500" />
+          <div className="text-xs font-mono font-bold uppercase tracking-wider text-zinc-900 dark:text-zinc-200 flex items-center gap-1.5">
+            <Music className="w-3.5 h-3.5 text-red-600 dark:text-red-500" />
             <span>Guaranteed Playable Audio Downloads</span>
           </div>
           <p className="text-[11px] font-mono text-zinc-500">
@@ -441,9 +442,9 @@ export function AudioPreviewPlayer({ metadata, videoUrl }: AudioPreviewPlayerPro
           {/* Primary 320kbps MP3 Download */}
           <button
             onClick={() => handleServerDownload('320')}
-            className="flex-1 sm:flex-initial px-4 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 hover:border-red-500/50 text-white font-mono text-xs font-bold tracking-wider uppercase border border-zinc-700 flex items-center justify-center gap-2 active:scale-95 transition-all group"
+            className="flex-1 sm:flex-initial px-4 py-2.5 rounded-xl bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 hover:border-red-500/50 text-zinc-900 dark:text-white font-mono text-xs font-bold tracking-wider uppercase border border-zinc-200 dark:border-zinc-700 flex items-center justify-center gap-2 active:scale-95 transition-all group"
           >
-            <Download className="w-3.5 h-3.5 text-red-400 group-hover:translate-y-0.5 transition-transform" />
+            <Download className="w-3.5 h-3.5 text-red-600 dark:text-red-400 group-hover:translate-y-0.5 transition-transform" />
             <span>DOWNLOAD MP3 (320K)</span>
           </button>
 
@@ -451,7 +452,7 @@ export function AudioPreviewPlayer({ metadata, videoUrl }: AudioPreviewPlayerPro
           <button
             onClick={handleBrowserCaptureDownload}
             disabled={isGeneratingAudio}
-            className="flex-1 sm:flex-initial px-4 py-2.5 rounded-xl bg-gradient-to-r from-red-600 to-rose-700 hover:from-red-500 hover:to-rose-600 text-white font-mono text-xs font-bold tracking-wider uppercase flex items-center justify-center gap-2 shadow-lg shadow-red-950/50 active:scale-95 disabled:opacity-50 transition-all"
+            className="flex-1 sm:flex-initial px-4 py-2.5 rounded-xl bg-gradient-to-r from-red-600 to-rose-700 hover:from-red-500 hover:to-rose-600 text-white font-mono text-xs font-bold tracking-wider uppercase flex items-center justify-center gap-2 shadow-lg shadow-red-950/20 active:scale-95 disabled:opacity-50 transition-all"
           >
             {isGeneratingAudio ? (
               <>

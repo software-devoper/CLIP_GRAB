@@ -32,13 +32,15 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<any>(null);
 
-  // Sync dark mode class with document root
+  // Sync dark mode class with document root and body
   useEffect(() => {
     if (darkMode) {
       document.documentElement.classList.add('dark');
+      document.body.classList.add('dark');
       localStorage.setItem('clipgrab_theme', 'dark');
     } else {
       document.documentElement.classList.remove('dark');
+      document.body.classList.remove('dark');
       localStorage.setItem('clipgrab_theme', 'light');
     }
   }, [darkMode]);
@@ -97,7 +99,11 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 flex flex-col font-sans transition-colors">
+    <div
+      className={`min-h-screen ${
+        darkMode ? 'dark bg-zinc-950 text-zinc-100' : 'bg-zinc-50 text-zinc-900'
+      } flex flex-col font-sans transition-colors`}
+    >
       <Navbar darkMode={darkMode} onToggleDarkMode={handleToggleDarkMode} />
 
       <main className="flex-1 max-w-5xl w-full mx-auto px-4 sm:px-6 pt-8 sm:pt-12 pb-16 space-y-10">

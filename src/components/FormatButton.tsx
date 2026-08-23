@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { Download, Loader2, Check, Music, Video, Sparkles, Copy } from 'lucide-react';
+import { Download, Loader2, Check, Music, Video, Sparkles, Copy, CheckCircle2 } from 'lucide-react';
 import { FormatItem } from '../types.js';
+import { executeMediaDownload } from '../lib/downloadEngine.js';
 
 interface FormatButtonProps {
   format: FormatItem;
@@ -10,6 +11,7 @@ interface FormatButtonProps {
 
 export const FormatButton: React.FC<FormatButtonProps> = ({ format, videoUrl, videoTitle }) => {
   const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadSuccess, setDownloadSuccess] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
 
   const getDownloadUrl = () => {
@@ -22,22 +24,24 @@ export const FormatButton: React.FC<FormatButtonProps> = ({ format, videoUrl, vi
     return `/api/download?${params.toString()}`;
   };
 
-  const handleDownload = () => {
+  const handleDownload = async () => {
     setIsDownloading(true);
-    const downloadUrl = getDownloadUrl();
+    setDownloadSuccess(false);
 
-    // Trigger standard browser download
-    const link = document.createElement('a');
-    link.href = downloadUrl;
-    link.download = `${videoTitle}.${format.ext}`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-
-    // Reset spinner after trigger delay
-    setTimeout(() => {
-      setIsDownloading(false);
-    }, 4000);
+    await executeMediaDownload({
+      videoUrl,
+      formatId: format.formatId,
+      videoTitle,
+      ext: format.ext,
+      onComplete: () => {
+        setIsDownloading(false);
+        setDownloadSuccess(true);
+        setTimeout(() => setDownloadSuccess(false), 3000);
+      },
+      onError: () => {
+        setIsDownloading(false);
+      },
+    });
   };
 
   const handleCopyLink = async (e: React.MouseEvent) => {
@@ -134,7 +138,12 @@ export const FormatButton: React.FC<FormatButtonProps> = ({ format, videoUrl, vi
             {isDownloading ? (
               <>
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                <span className="font-mono text-[10px]">Streaming</span>
+                <span className="font-mono text-[10px]">Processing</span>
+              </>
+            ) : downloadSuccess ? (
+              <>
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-300" />
+                <span className="text-emerald-300">Saved</span>
               </>
             ) : (
               <>
