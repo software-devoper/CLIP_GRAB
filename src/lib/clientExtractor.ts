@@ -59,12 +59,35 @@ export async function fetchMetadataClientSide(url: string): Promise<{
   const isShorts = url.includes('/shorts/');
   let title = 'YouTube Video';
   let author = 'YouTube Creator';
-  let duration = isShorts ? 35 : 210; // smart initial fallback
+  let duration = isShorts ? 35 : 0;
   let viewCount: number | undefined = undefined;
   let viewCountFormatted = '150K views';
   const thumbnail = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
 
-  // 1. Try Invidious Public Mirrors for exact video lengthSeconds and true stream details
+  // Helper: parse time text
+  const parseTimeText = (timeStr?: string): number => {
+    if (!timeStr || typeof timeStr !== 'string') return 0;
+    const parts = timeStr.trim().split(':').map((p) => parseInt(p, 10));
+    if (parts.some((p) => isNaN(p))) return 0;
+    if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+    if (parts.length === 2) return parts[0] * 60 + parts[1];
+    return parts[0] || 0;
+  };
+
+  // 1. Try official oEmbed & NoEmbed first
+  try {
+    const oembedUrl = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`;
+    const res = await fetch(oembedUrl);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.title) title = data.title;
+      if (data.author_name) author = data.author_name;
+    }
+  } catch (e) {
+    // Continue
+  }
+
+  // 2. Try Invidious Public Mirrors for exact video lengthSeconds and true stream details
   const invidiousEndpoints = [
     `https://invidious.nerdvpn.de/api/v1/videos/${videoId}`,
     `https://inv.nadeko.net/api/v1/videos/${videoId}`,
@@ -74,7 +97,7 @@ export async function fetchMetadataClientSide(url: string): Promise<{
   for (const endpoint of invidiousEndpoints) {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2500);
+      const timeoutId = setTimeout(() => controller.abort(), 2000);
       const res = await fetch(endpoint, { signal: controller.signal });
       clearTimeout(timeoutId);
 
@@ -89,43 +112,54 @@ export async function fetchMetadataClientSide(url: string): Promise<{
           viewCount = invData.viewCount;
           viewCountFormatted = `${(invData.viewCount / 1000).toFixed(0)}K views`;
         }
-        break; // Successfully got real metadata
+        if (duration > 0) break;
       }
     } catch {
-      // Continue to next endpoint or oembed
+      // Continue
     }
   }
 
-  // 2. If duration or title still default, query official oEmbed and NoEmbed
-  if (title === 'YouTube Video') {
+  // 3. If duration is still 0, fallback to YouTube InnerTube search or default
+  if (!duration) {
     try {
-      const oembedUrl = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`;
-      const res = await fetch(oembedUrl);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.title) title = data.title;
-        if (data.author_name) author = data.author_name;
-      } else {
-        const noembedRes = await fetch(`https://noembed.com/embed?url=https://www.youtube.com/watch?v=${videoId}`);
-        if (noembedRes.ok) {
-          const noembedData = await noembedRes.json();
-          if (noembedData.title) title = noembedData.title;
-          if (noembedData.author_name) author = noembedData.author_name;
+      const searchRes = await fetch('https://www.youtube.com/youtubei/v1/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          context: { client: { clientName: 'WEB', clientVersion: '2.20240313.01.00', hl: 'en', gl: 'US' } },
+          query: title || videoId,
+        }),
+      });
+      if (searchRes.ok) {
+        const sdata = await searchRes.json();
+        const findVid = (obj: any): any => {
+          if (!obj || typeof obj !== 'object') return null;
+          if (obj.videoId === videoId && obj.lengthText?.simpleText) return obj;
+          for (const k of Object.keys(obj)) {
+            const f = findVid(obj[k]);
+            if (f) return f;
+          }
+          return null;
+        };
+        const m = findVid(sdata);
+        if (m && m.lengthText?.simpleText) {
+          duration = parseTimeText(m.lengthText.simpleText);
         }
       }
-    } catch (e) {
-      console.warn('oEmbed lookup fallback notice:', e);
+    } catch {
+      // Continue
     }
   }
 
-  const durationFormatted = formatDuration(duration);
+  const finalDuration = duration > 0 ? duration : (isShorts ? 35 : 210);
+  const durationFormatted = formatDuration(finalDuration);
 
   const metadata: VideoMetadata = {
     id: videoId,
     title,
     channel: author,
     channelUrl: `https://www.youtube.com/@${author.replace(/\s+/g, '')}`,
-    duration,
+    duration: finalDuration,
     durationFormatted,
     thumbnail,
     viewCount,

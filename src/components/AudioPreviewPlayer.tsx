@@ -19,6 +19,8 @@ import {
   Layers,
   FileAudio,
   Loader2,
+  AlertCircle,
+  ExternalLink,
 } from 'lucide-react';
 import { VideoMetadata } from '../types.js';
 import { executeMediaDownload, DownloadProgress } from '../lib/downloadEngine.js';
@@ -197,10 +199,13 @@ export function AudioPreviewPlayer({ metadata, videoUrl }: AudioPreviewPlayerPro
     }
   };
 
+  const [showMirrorOptions, setShowMirrorOptions] = useState(false);
+
   // Direct Server Stream Download for MP3
   const handleServerDownload = async (bitrate = '320') => {
     setIsGeneratingAudio(true);
     setDownloadSuccess(false);
+    setShowMirrorOptions(false);
     const estBytes = Math.round((parseInt(bitrate, 10) * 1000 * (metadata.duration || 180)) / 8);
     setAudioProgress({
       percent: 5,
@@ -232,9 +237,10 @@ export function AudioPreviewPlayer({ metadata, videoUrl }: AudioPreviewPlayerPro
         }, 3500);
       },
       onError: (err) => {
-        console.error('Audio download error:', err);
+        console.warn('Direct stream notice (bot verification):', err.message);
         setIsGeneratingAudio(false);
-        setTimeout(() => setAudioProgress(null), 4000);
+        setShowMirrorOptions(true);
+        setTimeout(() => setAudioProgress(null), 2500);
       },
     });
   };
@@ -243,6 +249,7 @@ export function AudioPreviewPlayer({ metadata, videoUrl }: AudioPreviewPlayerPro
   const handleBrowserCaptureDownload = async () => {
     setIsGeneratingAudio(true);
     setDownloadSuccess(false);
+    setShowMirrorOptions(false);
     const estBytes = Math.round((1411.2 * 1000 * (metadata.duration || 180)) / 8);
     setAudioProgress({
       percent: 5,
@@ -274,9 +281,10 @@ export function AudioPreviewPlayer({ metadata, videoUrl }: AudioPreviewPlayerPro
         }, 3500);
       },
       onError: (err) => {
-        console.error('WAV download error:', err);
+        console.warn('WAV stream notice (bot verification):', err.message);
         setIsGeneratingAudio(false);
-        setTimeout(() => setAudioProgress(null), 4000);
+        setShowMirrorOptions(true);
+        setTimeout(() => setAudioProgress(null), 2500);
       },
     });
   };
@@ -560,6 +568,47 @@ export function AudioPreviewPlayer({ metadata, videoUrl }: AudioPreviewPlayerPro
                 className="h-full bg-gradient-to-r from-red-600 to-amber-500 rounded-full transition-all duration-300 shadow-[0_0_8px_rgba(239,68,68,0.4)]"
                 style={{ width: `${Math.max(5, audioProgress.percent)}%` }}
               />
+            </div>
+          </div>
+        )}
+        {/* Instant Mirror Fallback Options if YouTube Cloud IP Rate Limit Triggers */}
+        {showMirrorOptions && videoId && (
+          <div className="mt-3 pt-3 border-t border-amber-200 dark:border-amber-900/40 bg-amber-50/60 dark:bg-amber-950/20 p-3 rounded-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-2 text-amber-800 dark:text-amber-300">
+              <AlertCircle className="w-4 h-4 shrink-0 text-amber-600 dark:text-amber-400" />
+              <span>YouTube requires direct download client. Choose high-speed mirror:</span>
+            </div>
+
+            <div className="flex items-center gap-2 flex-wrap">
+              <a
+                href={`https://www.y2mate.com/youtube/${videoId}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-red-600 text-white font-mono text-[11px] font-bold hover:bg-red-500 transition-colors"
+              >
+                <span>Y2Mate MP3</span>
+                <ExternalLink className="w-3 h-3" />
+              </a>
+
+              <a
+                href={`https://ssyoutube.com/watch?v=${videoId}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-zinc-800 text-white font-mono text-[11px] font-bold hover:bg-zinc-700 transition-colors"
+              >
+                <span>SaveFrom</span>
+                <ExternalLink className="w-3 h-3" />
+              </a>
+
+              <a
+                href="https://cobalt.tools"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-purple-600 text-white font-mono text-[11px] font-bold hover:bg-purple-500 transition-colors"
+              >
+                <span>Cobalt</span>
+                <ExternalLink className="w-3 h-3" />
+              </a>
             </div>
           </div>
         )}

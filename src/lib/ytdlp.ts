@@ -87,50 +87,172 @@ export function parseIsoDuration(durationStr: string): number {
 
 /**
  * Scrapes real YouTube video metadata (exact length in seconds, title, channel, views)
- * by fetching the watch page and parsing ytInitialPlayerResponse and meta tags.
+ * using YouTube InnerTube Next & Search endpoints and watch page parsing.
  */
 export async function scrapeYouTubeMetadata(videoId: string, originalUrl: string): Promise<VideoMetadata | null> {
   try {
-    const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
-    const res = await fetch(watchUrl, {
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        'Accept-Language': 'en-US,en;q=0.9',
-      },
-    });
-
-    if (!res.ok) return null;
-    const html = await res.text();
-
     let title: string | undefined;
     let channel: string | undefined;
     let duration = 0;
     let viewCount: number | undefined;
+    let viewCountFormatted: string | undefined;
 
-    // 1. ISO 8601 Duration Meta Tag
-    const durationMatch = html.match(/itemprop=["']duration["']\s+content=["']([^"']+)["']/i) ||
-      html.match(/content=["']([^"']+)["']\s+itemprop=["']duration["']/i);
-    if (durationMatch && durationMatch[1]) {
-      const parsed = parseIsoDuration(durationMatch[1]);
-      if (parsed > 0) duration = parsed;
+    // Helper: Parse MM:SS or HH:MM:SS string to seconds
+    const parseTimeText = (timeStr?: string): number => {
+      if (!timeStr || typeof timeStr !== 'string') return 0;
+      const parts = timeStr.trim().split(':').map((p) => parseInt(p, 10));
+      if (parts.some((p) => isNaN(p))) return 0;
+      if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+      if (parts.length === 2) return parts[0] * 60 + parts[1];
+      return parts[0] || 0;
+    };
+
+    // 1. YouTube InnerTube Next API for exact title, author, views
+    try {
+      const nextRes = await fetch('https://www.youtube.com/youtubei/v1/next', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+          'Accept-Language': 'en-US,en;q=0.9',
+        },
+        body: JSON.stringify({
+          context: {
+            client: {
+              clientName: 'WEB',
+              clientVersion: '2.20240313.01.00',
+              hl: 'en',
+              gl: 'US',
+            },
+          },
+          videoId,
+        }),
+      });
+
+      if (nextRes.ok) {
+        const data: any = await nextRes.json();
+        const contents = data.contents?.twoColumnWatchNextResults?.results?.results?.contents || [];
+        for (const item of contents) {
+          if (item.videoPrimaryInfoRenderer) {
+            const p = item.videoPrimaryInfoRenderer;
+            title = p.title?.runs?.[0]?.text || title;
+            viewCountFormatted =
+              p.viewCount?.videoViewCountRenderer?.shortViewCount?.simpleText ||
+              p.viewCount?.videoViewCountRenderer?.viewCount?.simpleText ||
+              viewCountFormatted;
+          }
+          if (item.videoSecondaryInfoRenderer) {
+            const s = item.videoSecondaryInfoRenderer;
+            channel = s.owner?.videoOwnerRenderer?.title?.runs?.[0]?.text || channel;
+          }
+        }
+      }
+    } catch {
+      // Ignored
     }
 
-    // 2. ytInitialPlayerResponse JSON extraction
-    const playerResponseMatch = html.match(/ytInitialPlayerResponse\s*=\s*({.+?});(?:var|<\/script>)/s);
-    if (playerResponseMatch && playerResponseMatch[1]) {
+    // 2. Official oEmbed fallback for title/channel
+    if (!title || !channel) {
       try {
-        const playerJson = JSON.parse(playerResponseMatch[1]);
-        const details = playerJson?.videoDetails;
-        if (details) {
-          if (details.title) title = details.title;
-          if (details.author) channel = details.author;
-          if (details.lengthSeconds) {
-            const sec = parseInt(details.lengthSeconds, 10);
-            if (sec > 0) duration = sec;
+        const oembedRes = await fetch(
+          `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`
+        );
+        if (oembedRes.ok) {
+          const oembed: any = await oembedRes.json();
+          if (oembed.title && !title) title = oembed.title;
+          if (oembed.author_name && !channel) channel = oembed.author_name;
+        }
+      } catch {
+        // Ignored
+      }
+    }
+
+    // 3. YouTube InnerTube Search API for EXACT lengthText (e.g. 5:12, 3:52, 10:04)
+    try {
+      const searchQuery = title || videoId;
+      const searchRes = await fetch('https://www.youtube.com/youtubei/v1/search', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+          'Accept-Language': 'en-US,en;q=0.9',
+        },
+        body: JSON.stringify({
+          context: {
+            client: {
+              clientName: 'WEB',
+              clientVersion: '2.20240313.01.00',
+              hl: 'en',
+              gl: 'US',
+            },
+          },
+          query: searchQuery,
+        }),
+      });
+
+      if (searchRes.ok) {
+        const searchData: any = await searchRes.json();
+        const findMatchingVideo = (obj: any): any => {
+          if (!obj || typeof obj !== 'object') return null;
+          if (obj.videoId === videoId && obj.lengthText?.simpleText) return obj;
+          for (const k of Object.keys(obj)) {
+            const found = findMatchingVideo(obj[k]);
+            if (found) return found;
           }
-          if (details.viewCount) {
-            viewCount = parseInt(details.viewCount, 10);
+          return null;
+        };
+
+        const matched = findMatchingVideo(searchData);
+        if (matched && matched.lengthText?.simpleText) {
+          duration = parseTimeText(matched.lengthText.simpleText);
+        } else {
+          // If exact video ID match wasn't in top tree, check first video item if query was specific title
+          const findAnyVideo = (obj: any): any => {
+            if (!obj || typeof obj !== 'object') return null;
+            if (obj.videoId && obj.lengthText?.simpleText) return obj;
+            for (const k of Object.keys(obj)) {
+              const found = findAnyVideo(obj[k]);
+              if (found) return found;
+            }
+            return null;
+          };
+          const firstVid = findAnyVideo(searchData);
+          if (firstVid && firstVid.lengthText?.simpleText) {
+            duration = parseTimeText(firstVid.lengthText.simpleText);
+          }
+        }
+      }
+    } catch {
+      // Ignored
+    }
+
+    // 4. Watch Page Scraping for duration meta tags if still 0
+    if (!duration) {
+      try {
+        const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
+        const res = await fetch(watchUrl, {
+          headers: {
+            'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'Accept-Language': 'en-US,en;q=0.9',
+          },
+        });
+        if (res.ok) {
+          const html = await res.text();
+          const durationMatch =
+            html.match(/itemprop=["']duration["']\s+content=["']([^"']+)["']/i) ||
+            html.match(/content=["']([^"']+)["']\s+itemprop=["']duration["']/i);
+          if (durationMatch && durationMatch[1]) {
+            const parsed = parseIsoDuration(durationMatch[1]);
+            if (parsed > 0) duration = parsed;
+          }
+          if (!duration) {
+            const lengthMatch = html.match(/"lengthSeconds"\s*:\s*"(\d+)"/);
+            if (lengthMatch && lengthMatch[1]) {
+              duration = parseInt(lengthMatch[1], 10);
+            }
           }
         }
       } catch {
@@ -138,33 +260,9 @@ export async function scrapeYouTubeMetadata(videoId: string, originalUrl: string
       }
     }
 
-    // 3. Fallback regex for lengthSeconds
-    if (!duration) {
-      const lengthMatch = html.match(/"lengthSeconds"\s*:\s*"(\d+)"/);
-      if (lengthMatch && lengthMatch[1]) {
-        duration = parseInt(lengthMatch[1], 10);
-      }
-    }
-
-    // 4. Fallback for title
-    if (!title) {
-      const titleMatch = html.match(/<title>([^<]+)<\/title>/i);
-      if (titleMatch && titleMatch[1]) {
-        title = titleMatch[1].replace(' - YouTube', '').trim();
-      }
-    }
-
-    // 5. Fallback for channel
-    if (!channel) {
-      const authorMatch = html.match(/"author"\s*:\s*"([^"]+)"/);
-      if (authorMatch && authorMatch[1]) {
-        channel = authorMatch[1];
-      }
-    }
-
     if (!title && !duration) return null;
 
-    const finalDuration = duration > 0 ? duration : 180;
+    const finalDuration = duration > 0 ? duration : 210;
 
     return {
       id: videoId,
@@ -175,7 +273,7 @@ export async function scrapeYouTubeMetadata(videoId: string, originalUrl: string
       durationFormatted: formatDuration(finalDuration),
       thumbnail: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
       viewCount,
-      viewCountFormatted: formatViews(viewCount) || 'Popular',
+      viewCountFormatted: viewCountFormatted || formatViews(viewCount) || 'Popular',
       originalUrl,
     };
   } catch (err) {
@@ -750,7 +848,7 @@ export interface MediaStreamResult {
 }
 
 /**
- * Spawns an optimized media stream with 100% resilient audio/video delivery
+ * Spawns an optimized media stream with 100% genuine YouTube audio/video streaming
  */
 export function spawnDownloadStream(options: {
   url: string;
@@ -760,12 +858,11 @@ export function spawnDownloadStream(options: {
   duration?: number;
   signal?: AbortSignal;
 }): MediaStreamResult {
-  const { url, formatId, title, artist, duration = 180, signal } = options;
+  const { url, formatId, title, artist, signal } = options;
   const ytDlpPath = getYtDlpPath();
 
   const safeTitle = (title || 'YouTube Audio').replace(/["\r\n]/g, '').trim();
   const safeArtist = (artist || 'YouTube Artist').replace(/["\r\n]/g, '').trim();
-  const streamDuration = Math.min(600, Math.max(10, duration));
 
   // Check if requested format is Audio
   const isAudio =
@@ -781,7 +878,6 @@ export function spawnDownloadStream(options: {
   const outputStream = new PassThrough();
   let hasReceivedData = false;
   let activeProcess: ChildProcess | null = null;
-  let fallbackActive = false;
 
   const cleanup = () => {
     if (activeProcess && !activeProcess.killed) {
@@ -793,6 +889,20 @@ export function spawnDownloadStream(options: {
 
   if (signal) {
     signal.addEventListener('abort', cleanup, { once: true });
+  }
+
+  // Check for cookies file in common locations
+  const cookiePaths = [
+    path.join(process.cwd(), 'cookies.txt'),
+    path.join(process.cwd(), 'bin', 'cookies.txt'),
+    path.join(process.cwd(), 'data', 'cookies.txt'),
+  ];
+  let activeCookiePath: string | null = null;
+  for (const cp of cookiePaths) {
+    if (fs.existsSync(cp) && fs.statSync(cp).size > 0) {
+      activeCookiePath = cp;
+      break;
+    }
   }
 
   if (isAudio) {
@@ -812,121 +922,77 @@ export function spawnDownloadStream(options: {
       contentType = 'audio/mp4';
     }
 
-    const triggerAudioFallback = () => {
-      if (fallbackActive || hasReceivedData || signal?.aborted) return;
-      fallbackActive = true;
-
-      try {
-        let fallbackArgs: string[] = [];
-
-        if (targetExt === 'mp3') {
-          fallbackArgs = [
-            '-f', 'lavfi',
-            '-i', 'sine=frequency=220:sample_rate=44100',
-            '-t', String(streamDuration),
-            '-af', 'volume=0.3,tremolo=f=4:d=0.3',
-            '-c:a', 'libmp3lame',
-            '-b:a', `${bitrate}k`,
-            '-id3v2_version', '3',
-            '-metadata', `title=${safeTitle}`,
-            '-metadata', `artist=${safeArtist}`,
-            '-f', 'mp3',
-            'pipe:1',
-          ];
-        } else if (targetExt === 'wav') {
-          fallbackArgs = [
-            '-f', 'lavfi',
-            '-i', 'sine=frequency=220:sample_rate=44100',
-            '-t', String(streamDuration),
-            '-af', 'volume=0.3',
-            '-c:a', 'pcm_s16le',
-            '-ar', '44100',
-            '-ac', '2',
-            '-f', 'wav',
-            'pipe:1',
-          ];
-        } else {
-          fallbackArgs = [
-            '-f', 'lavfi',
-            '-i', 'sine=frequency=220:sample_rate=44100',
-            '-t', String(streamDuration),
-            '-af', 'volume=0.3',
-            '-c:a', 'aac',
-            '-b:a', '128k',
-            '-metadata', `title=${safeTitle}`,
-            '-metadata', `artist=${safeArtist}`,
-            '-f', 'adts',
-            'pipe:1',
-          ];
-        }
-
-        const fallbackProc = spawn('ffmpeg', fallbackArgs, { signal });
-        activeProcess = fallbackProc;
-
-        fallbackProc.stdout.on('data', (chunk) => {
-          hasReceivedData = true;
-          outputStream.write(chunk);
-        });
-
-        fallbackProc.stdout.on('end', () => {
-          outputStream.end();
-        });
-
-        fallbackProc.on('error', (err) => {
-          if (err.name !== 'AbortError' && !signal?.aborted) {
-            console.error('[Fallback audio error]:', err.message);
-          }
-        });
-      } catch {
-        outputStream.end();
-      }
-    };
-
-    // Primary YouTube audio extraction pipeline
     try {
       const ytArgs = [
-        '--js-runtimes', 'node:/usr/local/bin/node',
-        '--extractor-args', 'youtube:player_client=ios,web',
+        '--js-runtimes',
+        'node:/usr/local/bin/node',
+        '--extractor-args',
+        'youtube:player_client=ios,web',
         '--no-playlist',
         '--no-warnings',
         '--no-check-certificates',
-        '-f', 'ba/b',
-        '-o', '-',
-        url,
+        '-f',
+        'ba/b',
+        '-o',
+        '-',
       ];
+
+      if (activeCookiePath) {
+        ytArgs.push('--cookies', activeCookiePath);
+      }
+
+      ytArgs.push(url);
 
       let ffmpegArgs: string[] = [];
       if (targetExt === 'mp3') {
         ffmpegArgs = [
-          '-i', 'pipe:0',
+          '-i',
+          'pipe:0',
           '-vn',
-          '-c:a', 'libmp3lame',
-          '-b:a', `${bitrate}k`,
-          '-id3v2_version', '3',
-          '-metadata', `title=${safeTitle}`,
-          '-metadata', `artist=${safeArtist}`,
-          '-f', 'mp3',
+          '-c:a',
+          'libmp3lame',
+          '-b:a',
+          `${bitrate}k`,
+          '-id3v2_version',
+          '3',
+          '-metadata',
+          `title=${safeTitle}`,
+          '-metadata',
+          `artist=${safeArtist}`,
+          '-f',
+          'mp3',
           'pipe:1',
         ];
       } else if (targetExt === 'wav') {
         ffmpegArgs = [
-          '-i', 'pipe:0',
+          '-i',
+          'pipe:0',
           '-vn',
-          '-c:a', 'pcm_s16le',
-          '-ar', '44100',
-          '-ac', '2',
-          '-f', 'wav',
+          '-c:a',
+          'pcm_s16le',
+          '-ar',
+          '44100',
+          '-ac',
+          '2',
+          '-f',
+          'wav',
           'pipe:1',
         ];
       } else {
         ffmpegArgs = [
-          '-i', 'pipe:0',
+          '-i',
+          'pipe:0',
           '-vn',
-          '-c:a', 'aac',
-          '-b:a', '128k',
-          '-metadata', `title=${safeTitle}`,
-          '-metadata', `artist=${safeArtist}`,
-          '-f', 'adts',
+          '-c:a',
+          'aac',
+          '-b:a',
+          '128k',
+          '-metadata',
+          `title=${safeTitle}`,
+          '-metadata',
+          `artist=${safeArtist}`,
+          '-f',
+          'adts',
           'pipe:1',
         ];
       }
@@ -943,32 +1009,30 @@ export function spawnDownloadStream(options: {
       });
 
       ffmpegProc.stdout.on('end', () => {
-        if (!hasReceivedData) {
-          triggerAudioFallback();
-        } else {
-          outputStream.end();
-        }
+        outputStream.end();
       });
 
       ytdlpProc.on('error', (err) => {
         if (err.name !== 'AbortError' && !signal?.aborted) {
-          triggerAudioFallback();
+          console.error('[yt-dlp stream error]:', err.message);
         }
+        outputStream.end();
       });
 
       ffmpegProc.on('error', (err) => {
         if (err.name !== 'AbortError' && !signal?.aborted) {
-          triggerAudioFallback();
+          console.error('[ffmpeg audio stream error]:', err.message);
         }
+        outputStream.end();
       });
 
       ytdlpProc.on('close', (code) => {
         if (code !== 0 && !hasReceivedData) {
-          triggerAudioFallback();
+          outputStream.end();
         }
       });
     } catch {
-      triggerAudioFallback();
+      outputStream.end();
     }
 
     return {
@@ -983,57 +1047,26 @@ export function spawnDownloadStream(options: {
   const targetExt = 'mp4';
   const contentType = 'video/mp4';
 
-  const triggerVideoFallback = () => {
-    if (fallbackActive || hasReceivedData || signal?.aborted) return;
-    fallbackActive = true;
-
-    try {
-      const fallbackProc = spawn('ffmpeg', [
-        '-f', 'lavfi',
-        '-i', 'color=c=black:s=1280x720:r=30',
-        '-f', 'lavfi',
-        '-i', 'sine=frequency=220:sample_rate=44100',
-        '-t', String(streamDuration),
-        '-c:v', 'libx264',
-        '-tune', 'zerolatency',
-        '-pix_fmt', 'yuv420p',
-        '-c:a', 'aac',
-        '-b:a', '128k',
-        '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
-        '-f', 'mp4',
-        'pipe:1',
-      ], { signal });
-
-      activeProcess = fallbackProc;
-
-      fallbackProc.stdout.on('data', (chunk) => {
-        hasReceivedData = true;
-        outputStream.write(chunk);
-      });
-
-      fallbackProc.stdout.on('end', () => {
-        outputStream.end();
-      });
-
-      fallbackProc.on('error', () => {
-        outputStream.end();
-      });
-    } catch {
-      outputStream.end();
-    }
-  };
-
   try {
     const args = [
-      '--js-runtimes', 'node:/usr/local/bin/node',
-      '--extractor-args', 'youtube:player_client=ios,web',
-      '-f', formatId,
+      '--js-runtimes',
+      'node:/usr/local/bin/node',
+      '--extractor-args',
+      'youtube:player_client=ios,web',
+      '-f',
+      formatId,
       '--no-playlist',
       '--no-warnings',
       '--no-check-certificates',
-      '-o', '-',
-      url,
+      '-o',
+      '-',
     ];
+
+    if (activeCookiePath) {
+      args.push('--cookies', activeCookiePath);
+    }
+
+    args.push(url);
 
     const child = spawn(ytDlpPath, args, { signal });
     activeProcess = child;
@@ -1044,26 +1077,21 @@ export function spawnDownloadStream(options: {
     });
 
     child.stdout.on('end', () => {
-      if (!hasReceivedData) {
-        triggerVideoFallback();
-      } else {
-        outputStream.end();
-      }
+      outputStream.end();
     });
 
     child.on('error', (err) => {
       if (err.name !== 'AbortError' && !signal?.aborted) {
-        triggerVideoFallback();
+        console.error('[yt-dlp video error]:', err.message);
       }
+      outputStream.end();
     });
 
-    child.on('close', (code) => {
-      if (code !== 0 && !hasReceivedData) {
-        triggerVideoFallback();
-      }
+    child.on('close', () => {
+      outputStream.end();
     });
   } catch {
-    triggerVideoFallback();
+    outputStream.end();
   }
 
   return {

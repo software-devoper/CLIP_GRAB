@@ -198,14 +198,34 @@ app.get('/api/download', (req: Request, res: Response): void => {
   };
 
   if (stream) {
-    sendHeadersIfNeeded();
-    stream.pipe(res);
+    stream.on('data', (chunk) => {
+      sendHeadersIfNeeded();
+      res.write(chunk);
+    });
+
+    stream.on('end', () => {
+      if (!headersSent && !res.headersSent) {
+        res.status(503).json({
+          error: 'YOUTUBE_BOT_PROTECTION',
+          message: 'YouTube bot verification required for direct cloud download.',
+        });
+        return;
+      }
+      res.end();
+    });
+
     stream.on('error', (err) => {
       if (cleanup) cleanup();
-      if (!res.headersSent) {
-        res.status(500).send('Streaming error');
+      if (!headersSent && !res.headersSent) {
+        res.status(500).json({
+          error: 'STREAM_ERROR',
+          message: 'Error reading media stream from source.',
+        });
+      } else {
+        res.end();
       }
     });
+
     req.on('close', () => {
       abortController.abort();
       if (cleanup) cleanup();

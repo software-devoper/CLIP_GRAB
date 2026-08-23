@@ -1,7 +1,21 @@
 import React, { useState } from 'react';
-import { Download, Loader2, Music, Video, Sparkles, Copy, CheckCircle2, Check, ArrowDownToLine, Zap } from 'lucide-react';
+import {
+  Download,
+  Loader2,
+  Music,
+  Video,
+  Sparkles,
+  Copy,
+  CheckCircle2,
+  Check,
+  ArrowDownToLine,
+  ExternalLink,
+  AlertCircle,
+  Zap,
+} from 'lucide-react';
 import { FormatItem } from '../types.js';
 import { executeMediaDownload, DownloadProgress } from '../lib/downloadEngine.js';
+import { extractYouTubeVideoId } from '../lib/clientExtractor.js';
 
 interface FormatButtonProps {
   format: FormatItem;
@@ -21,7 +35,10 @@ export const FormatButton: React.FC<FormatButtonProps> = ({
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadSuccess, setDownloadSuccess] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
+  const [showMirrorOptions, setShowMirrorOptions] = useState(false);
   const [progress, setProgress] = useState<DownloadProgress | null>(null);
+
+  const videoId = extractYouTubeVideoId(videoUrl) || '';
 
   const getDownloadUrl = () => {
     const params = new URLSearchParams({
@@ -40,11 +57,12 @@ export const FormatButton: React.FC<FormatButtonProps> = ({
 
     setIsDownloading(true);
     setDownloadSuccess(false);
+    setShowMirrorOptions(false);
     setProgress({
       percent: 5,
       receivedBytes: 0,
       totalBytes: format.filesizeApprox || 0,
-      speed: 'Starting...',
+      speed: 'Starting stream...',
       formattedReceived: '0 MB',
       formattedTotal: format.filesizeFormatted || 'Calculating...',
       status: 'preparing',
@@ -71,7 +89,8 @@ export const FormatButton: React.FC<FormatButtonProps> = ({
       },
       onError: () => {
         setIsDownloading(false);
-        setTimeout(() => setProgress(null), 3000);
+        setShowMirrorOptions(true);
+        setTimeout(() => setProgress(null), 2500);
       },
     });
   };
@@ -88,7 +107,10 @@ export const FormatButton: React.FC<FormatButtonProps> = ({
     }
   };
 
-  const isRecommended = format.note?.includes('Recommended') || format.formatId.includes('320') || format.formatId.includes('1080');
+  const isRecommended =
+    format.note?.includes('Recommended') ||
+    format.formatId.includes('320') ||
+    format.formatId.includes('1080');
 
   return (
     <div
@@ -232,6 +254,48 @@ export const FormatButton: React.FC<FormatButtonProps> = ({
               className="h-full bg-gradient-to-r from-red-600 via-rose-500 to-amber-500 rounded-full transition-all duration-300 shadow-[0_0_10px_rgba(239,68,68,0.5)]"
               style={{ width: `${Math.max(5, progress.percent)}%` }}
             />
+          </div>
+        </div>
+      )}
+
+      {/* Instant Mirror Fallback Options if YouTube Cloud IP Rate Limit Triggers */}
+      {showMirrorOptions && videoId && (
+        <div className="mt-3 pt-3 border-t border-amber-200 dark:border-amber-900/40 bg-amber-50/60 dark:bg-amber-950/20 p-3 rounded-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2 text-amber-800 dark:text-amber-300">
+            <AlertCircle className="w-4 h-4 shrink-0 text-amber-600 dark:text-amber-400" />
+            <span>YouTube requires direct download client. Choose high-speed mirror:</span>
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            <a
+              href={`https://www.y2mate.com/youtube/${videoId}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-red-600 text-white font-mono text-[11px] font-bold hover:bg-red-500 transition-colors"
+            >
+              <span>Y2Mate MP3/MP4</span>
+              <ExternalLink className="w-3 h-3" />
+            </a>
+
+            <a
+              href={`https://ssyoutube.com/watch?v=${videoId}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-zinc-800 text-white font-mono text-[11px] font-bold hover:bg-zinc-700 transition-colors"
+            >
+              <span>SaveFrom</span>
+              <ExternalLink className="w-3 h-3" />
+            </a>
+
+            <a
+              href="https://cobalt.tools"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-purple-600 text-white font-mono text-[11px] font-bold hover:bg-purple-500 transition-colors"
+            >
+              <span>Cobalt</span>
+              <ExternalLink className="w-3 h-3" />
+            </a>
           </div>
         </div>
       )}

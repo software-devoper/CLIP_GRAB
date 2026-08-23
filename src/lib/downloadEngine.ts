@@ -105,8 +105,17 @@ export async function executeMediaDownload({
     clearTimeout(timeoutId);
 
     if (!response.ok) {
-      const errText = await response.text().catch(() => 'Download stream failed.');
-      throw new Error(errText || `HTTP Error ${response.status}`);
+      let errMessage = 'Download stream failed.';
+      try {
+        const errorJson = await response.json();
+        if (errorJson?.message) {
+          errMessage = errorJson.message;
+        }
+      } catch {
+        const errText = await response.text().catch(() => '');
+        if (errText) errMessage = errText;
+      }
+      throw new Error(errMessage);
     }
 
     if (!response.body) {
@@ -162,7 +171,7 @@ export async function executeMediaDownload({
     }
 
     if (receivedBytes === 0) {
-      throw new Error('Empty stream received from YouTube.');
+      throw new Error('YouTube stream returned no data due to bot verification requirements.');
     }
 
     // Packaging phase
@@ -208,7 +217,7 @@ export async function executeMediaDownload({
 
     if (onComplete) onComplete();
   } catch (err: any) {
-    console.error('Download execution error:', err);
+    console.warn('Download notice:', err?.message || err);
     if (onProgress) {
       onProgress({
         percent: 0,
