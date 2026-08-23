@@ -3,6 +3,7 @@
  */
 
 import { spawn, ChildProcess } from 'child_process';
+import { Readable } from 'stream';
 import fs from 'fs';
 import path from 'path';
 import { GroupedFormats, FormatItem, VideoMetadata } from '../types.js';
@@ -393,13 +394,15 @@ export async function fetchVideoInfo(
 
   return new Promise(async (resolve, reject) => {
     const args = [
+      '--js-runtimes',
+      'node:/usr/local/bin/node',
       '-J',
       '--no-playlist',
       '--no-warnings',
       '--skip-download',
       '--no-check-certificates',
       '--extractor-args',
-      'youtube:player_client=ios,android,web',
+      'youtube:player_client=ios,web',
       url,
     ];
 
@@ -738,11 +741,16 @@ export function sanitizeFilename(name: string, fallback = 'download'): string {
   return safe.length > 0 ? safe.slice(0, 120) : fallback;
 }
 
-import { createPureAudioStream } from './nativeAudioStream.js';
-import { Readable } from 'stream';
+export interface MediaStreamResult {
+  child?: ChildProcess;
+  stream?: Readable;
+  targetExt: string;
+  contentType: string;
+  cleanup?: () => void;
+}
 
 /**
- * Spawns an optimized media stream with guaranteed playable audio output
+ * Spawns an optimized media stream with 100% genuine audio/video extraction
  */
 export function spawnDownloadStream(options: {
   url: string;
@@ -751,37 +759,151 @@ export function spawnDownloadStream(options: {
   artist?: string;
   duration?: number;
   signal?: AbortSignal;
-}): { child?: ChildProcess; stream?: Readable; targetExt: string; contentType: string } {
-  const { url, formatId, title, artist, duration, signal } = options;
+}): MediaStreamResult {
+  const { url, formatId, title, artist, signal } = options;
   const ytDlpPath = getYtDlpPath();
 
-  const safeTitle = (title || 'YouTube Audio').replace(/"/g, '');
-  const safeArtist = (artist || 'ClipGrab').replace(/"/g, '');
-  const safeDuration = Math.min(Math.max(duration || 180, 5), 3600);
+  const safeTitle = (title || 'YouTube Audio').replace(/["\r\n]/g, '').trim();
+  const safeArtist = (artist || 'YouTube Artist').replace(/["\r\n]/g, '').trim();
 
-  let targetExt = 'mp4';
-  let contentType = 'video/mp4';
+  // Check if requested format is Audio
+  const isAudio =
+    formatId.startsWith('mp3_') ||
+    formatId === 'mp3' ||
+    formatId === '140' ||
+    formatId === 'm4a' ||
+    formatId === 'wav' ||
+    formatId === 'aac' ||
+    formatId === 'flac' ||
+    formatId.includes('audio');
 
-  if (formatId.startsWith('mp3_') || formatId === 'mp3' || formatId === '140' || formatId.includes('audio') || formatId.includes('wav')) {
-    // Generate standard pure audio stream natively without external ffmpeg requirement
-    const pureStream = createPureAudioStream({
-      title: safeTitle,
-      artist: safeArtist,
-      durationSeconds: safeDuration,
+  if (isAudio) {
+    let bitrate = 320;
+    let targetExt = 'mp3';
+    let contentType = 'audio/mpeg';
+
+    if (formatId === 'mp3_192') {
+      bitrate = 192;
+    } else if (formatId === 'mp3_128') {
+      bitrate = 128;
+    } else if (formatId === 'wav') {
+      targetExt = 'wav';
+      contentType = 'audio/wav';
+    } else if (formatId === '140' || formatId === 'm4a' || formatId === 'aac') {
+      targetExt = 'm4a';
+      contentType = 'audio/mp4';
+    }
+
+    const ytArgs = [
+      '--js-runtimes',
+      'node:/usr/local/bin/node',
+      '--extractor-args',
+      'youtube:player_client=ios,web',
+      '--no-playlist',
+      '--no-warnings',
+      '--no-check-certificates',
+      '-f',
+      'ba/b',
+      '-o',
+      '-',
+      url,
+    ];
+
+    let ffmpegArgs: string[] = [];
+
+    if (targetExt === 'mp3') {
+      ffmpegArgs = [
+        '-i',
+        'pipe:0',
+        '-vn',
+        '-c:a',
+        'libmp3lame',
+        '-b:a',
+        `${bitrate}k`,
+        '-id3v2_version',
+        '3',
+        '-metadata',
+        `title=${safeTitle}`,
+        '-metadata',
+        `artist=${safeArtist}`,
+        '-f',
+        'mp3',
+        'pipe:1',
+      ];
+    } else if (targetExt === 'wav') {
+      ffmpegArgs = [
+        '-i',
+        'pipe:0',
+        '-vn',
+        '-c:a',
+        'pcm_s16le',
+        '-ar',
+        '44100',
+        '-ac',
+        '2',
+        '-f',
+        'wav',
+        'pipe:1',
+      ];
+    } else if (targetExt === 'm4a') {
+      ffmpegArgs = [
+        '-i',
+        'pipe:0',
+        '-vn',
+        '-c:a',
+        'aac',
+        '-b:a',
+        '128k',
+        '-metadata',
+        `title=${safeTitle}`,
+        '-metadata',
+        `artist=${safeArtist}`,
+        '-f',
+        'adts',
+        'pipe:1',
+      ];
+    }
+
+    const ytdlpProc = spawn(ytDlpPath, ytArgs, { signal });
+    const ffmpegProc = spawn('ffmpeg', ffmpegArgs, { signal });
+
+    ytdlpProc.stdout.pipe(ffmpegProc.stdin);
+
+    const cleanup = () => {
+      try {
+        ytdlpProc.kill('SIGKILL');
+      } catch {}
+      try {
+        ffmpegProc.kill('SIGKILL');
+      } catch {}
+    };
+
+    ytdlpProc.on('error', (err) => {
+      console.error('[yt-dlp audio stream error]:', err);
+      cleanup();
     });
+
+    ffmpegProc.on('error', (err) => {
+      console.error('[ffmpeg audio stream error]:', err);
+      cleanup();
+    });
+
     return {
-      stream: pureStream.stream,
-      targetExt: pureStream.ext,
-      contentType: pureStream.contentType,
+      child: ffmpegProc,
+      targetExt,
+      contentType,
+      cleanup,
     };
   }
 
   // Video streaming with yt-dlp
-  targetExt = 'mp4';
-  contentType = 'video/mp4';
+  const targetExt = 'mp4';
+  const contentType = 'video/mp4';
   const args = [
     '--js-runtimes',
     'node:/usr/local/bin/node',
+    '--extractor-args',
+    'youtube:player_client=ios,web',
     '-f',
     formatId,
     '--no-playlist',
@@ -792,20 +914,15 @@ export function spawnDownloadStream(options: {
     url,
   ];
 
-  try {
-    const child = spawn(ytDlpPath, args, { signal });
-    return { child, targetExt, contentType };
-  } catch {
-    // Fallback to pure audio stream if binary execution fails
-    const pureStream = createPureAudioStream({
-      title: safeTitle,
-      artist: safeArtist,
-      durationSeconds: safeDuration,
-    });
-    return {
-      stream: pureStream.stream,
-      targetExt: pureStream.ext,
-      contentType: pureStream.contentType,
-    };
-  }
+  const child = spawn(ytDlpPath, args, { signal });
+  return {
+    child,
+    targetExt,
+    contentType,
+    cleanup: () => {
+      try {
+        child.kill('SIGKILL');
+      } catch {}
+    },
+  };
 }

@@ -21,7 +21,6 @@ import {
   Loader2,
 } from 'lucide-react';
 import { VideoMetadata } from '../types.js';
-import { generatePlayableAudioBlob, triggerBlobDownload } from '../lib/audioRecorder.js';
 import { executeMediaDownload, DownloadProgress } from '../lib/downloadEngine.js';
 import { formatBytes } from '../lib/clientExtractor.js';
 
@@ -198,17 +197,18 @@ export function AudioPreviewPlayer({ metadata, videoUrl }: AudioPreviewPlayerPro
     }
   };
 
-  // Direct Server Stream Download with Fallback
+  // Direct Server Stream Download for MP3
   const handleServerDownload = async (bitrate = '320') => {
     setIsGeneratingAudio(true);
     setDownloadSuccess(false);
+    const estBytes = Math.round((parseInt(bitrate, 10) * 1000 * (metadata.duration || 180)) / 8);
     setAudioProgress({
       percent: 5,
       receivedBytes: 0,
-      totalBytes: Math.round((parseInt(bitrate, 10) * 1000 * (metadata.duration || 180)) / 8),
-      speed: 'Starting...',
+      totalBytes: estBytes,
+      speed: 'Connecting...',
       formattedReceived: '0 MB',
-      formattedTotal: formatBytes(Math.round((parseInt(bitrate, 10) * 1000 * (metadata.duration || 180)) / 8)),
+      formattedTotal: formatBytes(estBytes),
       status: 'preparing',
     });
 
@@ -219,6 +219,7 @@ export function AudioPreviewPlayer({ metadata, videoUrl }: AudioPreviewPlayerPro
       artist: metadata.channel,
       duration: metadata.duration || 180,
       ext: 'mp3',
+      filesizeApprox: estBytes,
       onProgress: (p) => {
         setAudioProgress(p);
       },
@@ -230,63 +231,54 @@ export function AudioPreviewPlayer({ metadata, videoUrl }: AudioPreviewPlayerPro
           setAudioProgress(null);
         }, 3500);
       },
-      onError: () => {
+      onError: (err) => {
+        console.error('Audio download error:', err);
         setIsGeneratingAudio(false);
-        setTimeout(() => setAudioProgress(null), 3000);
+        setTimeout(() => setAudioProgress(null), 4000);
       },
     });
   };
 
-  // Guaranteed Playable Audio In-Browser Generation
+  // Direct Server Stream Download for WAV (Uncompressed Master Audio)
   const handleBrowserCaptureDownload = async () => {
     setIsGeneratingAudio(true);
     setDownloadSuccess(false);
+    const estBytes = Math.round((1411.2 * 1000 * (metadata.duration || 180)) / 8);
     setAudioProgress({
-      percent: 10,
+      percent: 5,
       receivedBytes: 0,
-      totalBytes: Math.round((1411.2 * 1000 * (metadata.duration || 180)) / 8),
-      speed: 'Transcoding...',
+      totalBytes: estBytes,
+      speed: 'Transcoding stream...',
       formattedReceived: '0 MB',
-      formattedTotal: formatBytes(Math.round((1411.2 * 1000 * (metadata.duration || 180)) / 8)),
+      formattedTotal: formatBytes(estBytes),
       status: 'preparing',
     });
 
-    try {
-      // Step through realistic encoding progress
-      await new Promise((r) => setTimeout(r, 200));
-      setAudioProgress((prev) => (prev ? { ...prev, percent: 35, speed: '4.2 MB/s', status: 'downloading' } : null));
-
-      await new Promise((r) => setTimeout(r, 300));
-      setAudioProgress((prev) => (prev ? { ...prev, percent: 70, speed: '5.1 MB/s', status: 'packaging' } : null));
-
-      const audioBlob = await generatePlayableAudioBlob(
-        metadata.title,
-        metadata.channel,
-        metadata.duration || 180
-      );
-
-      setAudioProgress((prev) => (prev ? { ...prev, percent: 95, speed: 'Writing file...', status: 'packaging' } : null));
-
-      const safeName = (metadata.title || 'audio')
-        .replace(/[/\\?%*:|"<>]/g, '_')
-        .trim()
-        .slice(0, 80);
-
-      triggerBlobDownload(audioBlob, `${safeName}_[320kbps].wav`);
-      
-      setAudioProgress((prev) => (prev ? { ...prev, percent: 100, speed: 'Complete', status: 'completed' } : null));
-      setDownloadSuccess(true);
-      setTimeout(() => {
-        setDownloadSuccess(false);
-        setAudioProgress(null);
-      }, 3500);
-    } catch (err) {
-      console.error('Audio capture error:', err);
-      // Fallback to server download
-      handleServerDownload('320');
-    } finally {
-      setIsGeneratingAudio(false);
-    }
+    await executeMediaDownload({
+      videoUrl,
+      formatId: 'wav',
+      videoTitle: metadata.title,
+      artist: metadata.channel,
+      duration: metadata.duration || 180,
+      ext: 'wav',
+      filesizeApprox: estBytes,
+      onProgress: (p) => {
+        setAudioProgress(p);
+      },
+      onComplete: () => {
+        setIsGeneratingAudio(false);
+        setDownloadSuccess(true);
+        setTimeout(() => {
+          setDownloadSuccess(false);
+          setAudioProgress(null);
+        }, 3500);
+      },
+      onError: (err) => {
+        console.error('WAV download error:', err);
+        setIsGeneratingAudio(false);
+        setTimeout(() => setAudioProgress(null), 4000);
+      },
+    });
   };
 
   // Waveform heights for animated visualizer

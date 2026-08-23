@@ -168,7 +168,7 @@ app.get('/api/download', (req: Request, res: Response): void => {
   const abortController = new AbortController();
 
   // Create stream with audio transcoding and metadata
-  const { child, stream, targetExt, contentType } = spawnDownloadStream({
+  const { child, stream, targetExt, contentType, cleanup } = spawnDownloadStream({
     url: normalizedUrl,
     formatId,
     title: customTitle,
@@ -202,6 +202,7 @@ app.get('/api/download', (req: Request, res: Response): void => {
     stream.pipe(res);
     req.on('close', () => {
       abortController.abort();
+      if (cleanup) cleanup();
     });
     return;
   }
@@ -224,50 +225,30 @@ app.get('/api/download', (req: Request, res: Response): void => {
     });
 
     child.on('error', (err) => {
-      console.error('Child process error, piping pure stream fallback:', err);
+      console.error('Child process streaming error:', err);
       if (!headersSent && !res.headersSent) {
-        const fallback = spawnDownloadStream({
-          url: normalizedUrl,
-          formatId: 'wav',
-          title: customTitle,
-          artist: customArtist,
-          duration: customDuration,
-        });
-        if (fallback.stream) {
-          sendHeadersIfNeeded();
-          fallback.stream.pipe(res);
-        } else {
-          res.status(500).send(`Streaming error: ${err.message}`);
-        }
+        res.status(500).send(`Streaming error: ${err.message}`);
       } else {
         res.end();
       }
+      if (cleanup) cleanup();
     });
 
     child.on('close', (code) => {
       if (code !== 0 && !headersSent && !res.headersSent) {
-        const fallback = spawnDownloadStream({
-          url: normalizedUrl,
-          formatId: 'wav',
-          title: customTitle,
-          artist: customArtist,
-          duration: customDuration,
-        });
-        if (fallback.stream) {
-          sendHeadersIfNeeded();
-          fallback.stream.pipe(res);
-        } else {
-          res.status(500).send('Failed to stream media from source.');
-        }
+        res.status(500).send('Failed to stream media from source.');
       } else {
         res.end();
       }
+      if (cleanup) cleanup();
     });
 
     // Terminate child process immediately if the browser disconnects or cancels
     req.on('close', () => {
       abortController.abort();
-      if (!child.killed) {
+      if (cleanup) {
+        cleanup();
+      } else if (!child.killed) {
         try {
           child.kill('SIGTERM');
         } catch {
@@ -278,9 +259,11 @@ app.get('/api/download', (req: Request, res: Response): void => {
     return;
   }
 
-  // Final fallback
-  sendHeadersIfNeeded();
-  res.end();
+  if (!headersSent && !res.headersSent) {
+    res.status(500).send('Unable to initialize media stream.');
+  } else {
+    res.end();
+  }
 });
 
 // ----------------------------------------------------
