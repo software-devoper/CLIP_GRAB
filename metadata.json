@@ -1,0 +1,6 @@
+{
+  "name": "ClipGrab",
+  "description": "Stateless YouTube video and audio downloader tool with multi-format streaming extraction.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

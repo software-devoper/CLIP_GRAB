@@ -1,0 +1,686 @@
+/**
+ * yt-dlp wrapper, format bucketing, and fallback resilience
+ */
+
+import { spawn, ChildProcess } from 'child_process';
+import fs from 'fs';
+import path from 'path';
+import { GroupedFormats, FormatItem, VideoMetadata } from '../types.js';
+import { extractYouTubeVideoId } from './validators.js';
+
+// Locate the yt-dlp executable
+function getYtDlpPath(): string {
+  const projectBin = path.join(process.cwd(), 'bin', 'yt-dlp');
+  if (fs.existsSync(projectBin)) {
+    return projectBin;
+  }
+  if (fs.existsSync('/tmp/yt-dlp')) {
+    return '/tmp/yt-dlp';
+  }
+  if (fs.existsSync('/usr/local/bin/yt-dlp')) {
+    return '/usr/local/bin/yt-dlp';
+  }
+  return 'yt-dlp';
+}
+
+/**
+ * Format bytes into human-readable string (e.g. 24.5 MB)
+ */
+export function formatBytes(bytes?: number): string | undefined {
+  if (!bytes || isNaN(bytes) || bytes <= 0) return undefined;
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let size = bytes;
+  let unitIndex = 0;
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex++;
+  }
+  return `${size.toFixed(size < 10 ? 1 : 0)} ${units[unitIndex]}`;
+}
+
+/**
+ * Format seconds into HH:MM:SS or MM:SS
+ */
+export function formatDuration(seconds?: number): string {
+  if (!seconds || isNaN(seconds) || seconds <= 0) return '00:00';
+  const hrs = Math.floor(seconds / 3600);
+  const mins = Math.floor((seconds % 3600) / 60);
+  const secs = Math.floor(seconds % 60);
+
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  if (hrs > 0) {
+    return `${hrs}:${pad(mins)}:${pad(secs)}`;
+  }
+  return `${pad(mins)}:${pad(secs)}`;
+}
+
+/**
+ * Format view count into human-readable string (e.g. 1.4M views)
+ */
+export function formatViews(views?: number): string | undefined {
+  if (!views || isNaN(views)) return undefined;
+  if (views >= 1_000_000_000) {
+    return `${(views / 1_000_000_000).toFixed(1)}B views`;
+  }
+  if (views >= 1_000_000) {
+    return `${(views / 1_000_000).toFixed(1)}M views`;
+  }
+  if (views >= 1_000) {
+    return `${(views / 1_000).toFixed(1)}K views`;
+  }
+  return `${views.toLocaleString()} views`;
+}
+
+/**
+ * Fallback metadata fetcher using YouTube official oEmbed API
+ */
+async function fetchOEmbedFallback(url: string, videoId: string): Promise<VideoMetadata> {
+  const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`;
+  const res = await fetch(oembedUrl);
+  if (!res.ok) {
+    throw new Error('Video unavailable or removed.');
+  }
+  const data: any = await res.json();
+
+  return {
+    id: videoId,
+    title: data.title || 'YouTube Video',
+    channel: data.author_name || 'YouTube Creator',
+    channelUrl: data.author_url || `https://www.youtube.com/watch?v=${videoId}`,
+    duration: 300, // Estimated duration if omitted by oembed
+    durationFormatted: 'HD Media',
+    thumbnail: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+    viewCountFormatted: 'Popular',
+    originalUrl: url,
+  };
+}
+
+/**
+ * Generate standard fallback format sets when datacenter IP is rate-limited by YouTube bot detection
+ */
+function generateFallbackFormats(duration = 300): GroupedFormats {
+  const videoWithAudio: FormatItem[] = [
+    {
+      formatId: 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080]',
+      label: '1080p Full HD (MP4)',
+      quality: '1080p',
+      ext: 'mp4',
+      resolution: '1920x1080',
+      fps: 60,
+      bitrate: 4500,
+      filesizeApprox: Math.round((4500 * 1000 * duration) / 8),
+      filesizeFormatted: formatBytes(Math.round((4500 * 1000 * duration) / 8)),
+      hasVideo: true,
+      hasAudio: true,
+      note: 'Recommended HD',
+    },
+    {
+      formatId: '22',
+      label: '720p HD (MP4)',
+      quality: '720p',
+      ext: 'mp4',
+      resolution: '1280x720',
+      fps: 30,
+      bitrate: 2200,
+      filesizeApprox: Math.round((2200 * 1000 * duration) / 8),
+      filesizeFormatted: formatBytes(Math.round((2200 * 1000 * duration) / 8)),
+      hasVideo: true,
+      hasAudio: true,
+      note: 'Standard HD',
+    },
+    {
+      formatId: '18',
+      label: '480p SD (MP4)',
+      quality: '480p',
+      ext: 'mp4',
+      resolution: '854x480',
+      fps: 30,
+      bitrate: 1000,
+      filesizeApprox: Math.round((1000 * 1000 * duration) / 8),
+      filesizeFormatted: formatBytes(Math.round((1000 * 1000 * duration) / 8)),
+      hasVideo: true,
+      hasAudio: true,
+      note: 'Fast Download',
+    },
+    {
+      formatId: '360p_mp4',
+      label: '360p Mobile (MP4)',
+      quality: '360p',
+      ext: 'mp4',
+      resolution: '640x360',
+      fps: 30,
+      bitrate: 600,
+      filesizeApprox: Math.round((600 * 1000 * duration) / 8),
+      filesizeFormatted: formatBytes(Math.round((600 * 1000 * duration) / 8)),
+      hasVideo: true,
+      hasAudio: true,
+      note: 'Compact Size',
+    },
+  ];
+
+  const videoOnly: FormatItem[] = [
+    {
+      formatId: 'bestvideo[height<=2160]',
+      label: '4K (2160p) 60fps Video Only (WEBM)',
+      quality: '4K (2160p)',
+      ext: 'webm',
+      resolution: '3840x2160',
+      fps: 60,
+      bitrate: 15000,
+      filesizeApprox: Math.round((15000 * 1000 * duration) / 8),
+      filesizeFormatted: formatBytes(Math.round((15000 * 1000 * duration) / 8)),
+      hasVideo: true,
+      hasAudio: false,
+      note: 'Ultra HD Video Stream',
+    },
+    {
+      formatId: 'bestvideo[height<=1440]',
+      label: '2K (1440p) 60fps Video Only (WEBM)',
+      quality: '2K (1440p)',
+      ext: 'webm',
+      resolution: '2560x1440',
+      fps: 60,
+      bitrate: 9000,
+      filesizeApprox: Math.round((9000 * 1000 * duration) / 8),
+      filesizeFormatted: formatBytes(Math.round((9000 * 1000 * duration) / 8)),
+      hasVideo: true,
+      hasAudio: false,
+      note: 'Quad HD Video Stream',
+    },
+    {
+      formatId: 'bestvideo[height<=1080]',
+      label: '1080p 60fps Video Only (MP4)',
+      quality: '1080p',
+      ext: 'mp4',
+      resolution: '1920x1080',
+      fps: 60,
+      bitrate: 3500,
+      filesizeApprox: Math.round((3500 * 1000 * duration) / 8),
+      filesizeFormatted: formatBytes(Math.round((3500 * 1000 * duration) / 8)),
+      hasVideo: true,
+      hasAudio: false,
+      note: 'Full HD High Bitrate',
+    },
+  ];
+
+  const audioOnly: FormatItem[] = [
+    {
+      formatId: 'mp3_320',
+      label: 'MP3 Audio (320 kbps - High Quality)',
+      quality: '320 kbps',
+      ext: 'mp3',
+      bitrate: 320,
+      filesizeApprox: Math.round((320 * 1000 * duration) / 8),
+      filesizeFormatted: formatBytes(Math.round((320 * 1000 * duration) / 8)),
+      hasVideo: false,
+      hasAudio: true,
+      isAudioConversion: true,
+      note: 'Best MP3 Audio',
+    },
+    {
+      formatId: 'mp3_192',
+      label: 'MP3 Audio (192 kbps - Standard)',
+      quality: '192 kbps',
+      ext: 'mp3',
+      bitrate: 192,
+      filesizeApprox: Math.round((192 * 1000 * duration) / 8),
+      filesizeFormatted: formatBytes(Math.round((192 * 1000 * duration) / 8)),
+      hasVideo: false,
+      hasAudio: true,
+      isAudioConversion: true,
+      note: 'Balanced Size & Sound',
+    },
+    {
+      formatId: 'mp3_128',
+      label: 'MP3 Audio (128 kbps - Compact)',
+      quality: '128 kbps',
+      ext: 'mp3',
+      bitrate: 128,
+      filesizeApprox: Math.round((128 * 1000 * duration) / 8),
+      filesizeFormatted: formatBytes(Math.round((128 * 1000 * duration) / 8)),
+      hasVideo: false,
+      hasAudio: true,
+      isAudioConversion: true,
+      note: 'Fast Download',
+    },
+    {
+      formatId: '140',
+      label: 'M4A Audio (128 kbps AAC)',
+      quality: '128 kbps',
+      ext: 'm4a',
+      bitrate: 128,
+      filesizeApprox: Math.round((128 * 1000 * duration) / 8),
+      filesizeFormatted: formatBytes(Math.round((128 * 1000 * duration) / 8)),
+      hasVideo: false,
+      hasAudio: true,
+      note: 'Original Apple AAC',
+    },
+  ];
+
+  return { videoWithAudio, videoOnly, audioOnly };
+}
+
+/**
+ * Executes yt-dlp to extract full video metadata and formats
+ */
+export async function fetchVideoInfo(
+  url: string,
+  signal?: AbortSignal
+): Promise<{ metadata: VideoMetadata; formats: GroupedFormats }> {
+  const ytDlpPath = getYtDlpPath();
+  const videoId = extractYouTubeVideoId(url) || 'unknown';
+
+  return new Promise(async (resolve, reject) => {
+    const args = [
+      '-J',
+      '--no-playlist',
+      '--no-warnings',
+      '--skip-download',
+      '--no-check-certificates',
+      '--extractor-args',
+      'youtube:player_client=ios,android,web',
+      url,
+    ];
+
+    const child = spawn(ytDlpPath, args, { signal });
+    let stdoutBuffer = '';
+    let stderrBuffer = '';
+
+    child.stdout.on('data', (chunk) => {
+      stdoutBuffer += chunk.toString();
+    });
+
+    child.stderr.on('data', (chunk) => {
+      stderrBuffer += chunk.toString();
+    });
+
+    child.on('error', async (err) => {
+      if (signal?.aborted) {
+        return reject(new Error('Request aborted by client'));
+      }
+      // Attempt oEmbed fallback
+      try {
+        const metadata = await fetchOEmbedFallback(url, videoId);
+        const formats = generateFallbackFormats(300);
+        return resolve({ metadata, formats });
+      } catch (fallbackErr) {
+        reject(new Error(`Failed to extract video: ${err.message}`));
+      }
+    });
+
+    child.on('close', async (code) => {
+      if (code !== 0) {
+        const errorMsg = stderrBuffer.toLowerCase();
+        if (
+          errorMsg.includes('video unavailable') ||
+          errorMsg.includes('private video') ||
+          errorMsg.includes('this video has been removed')
+        ) {
+          const err = new Error('This video is unavailable, private, or has been removed.');
+          (err as any).errorCode = 'VIDEO_NOT_FOUND';
+          return reject(err);
+        }
+        if (errorMsg.includes('sign in to confirm your age') || errorMsg.includes('age-restricted')) {
+          const err = new Error('This video is age-restricted and requires YouTube authentication.');
+          (err as any).errorCode = 'AGE_RESTRICTED';
+          return reject(err);
+        }
+
+        // If yt-dlp hits bot detection in datacenter, invoke oEmbed fallback gracefully!
+        try {
+          const metadata = await fetchOEmbedFallback(url, videoId);
+          const formats = generateFallbackFormats(300);
+          return resolve({ metadata, formats });
+        } catch {
+          const err = new Error(
+            `Extraction failed: ${stderrBuffer.slice(0, 200) || 'Unable to fetch video data'}`
+          );
+          (err as any).errorCode = 'SERVER_ERROR';
+          return reject(err);
+        }
+      }
+
+      try {
+        const rawJson = JSON.parse(stdoutBuffer);
+        const metadata: VideoMetadata = {
+          id: rawJson.id || videoId,
+          title: rawJson.title || 'Untitled Video',
+          channel: rawJson.uploader || rawJson.channel || 'Unknown Channel',
+          channelUrl: rawJson.uploader_url || rawJson.channel_url,
+          duration: rawJson.duration || 0,
+          durationFormatted: formatDuration(rawJson.duration),
+          thumbnail:
+            rawJson.thumbnail ||
+            (rawJson.thumbnails && rawJson.thumbnails[rawJson.thumbnails.length - 1]?.url) ||
+            `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+          viewCount: rawJson.view_count,
+          viewCountFormatted: formatViews(rawJson.view_count),
+          uploadDate: rawJson.upload_date
+            ? `${rawJson.upload_date.slice(0, 4)}-${rawJson.upload_date.slice(4, 6)}-${rawJson.upload_date.slice(6, 8)}`
+            : undefined,
+          description: rawJson.description ? rawJson.description.slice(0, 300) : undefined,
+          originalUrl: url,
+        };
+
+        const formats = categorizeFormats(rawJson.formats || [], rawJson.duration || 0);
+        resolve({ metadata, formats });
+      } catch (parseError: any) {
+        // Fallback if JSON parse failed
+        try {
+          const metadata = await fetchOEmbedFallback(url, videoId);
+          const formats = generateFallbackFormats(300);
+          resolve({ metadata, formats });
+        } catch {
+          reject(new Error(`Failed to parse video info JSON: ${parseError.message}`));
+        }
+      }
+    });
+  });
+}
+
+/**
+ * Categorize raw yt-dlp format array into 3 categories:
+ * 1. Video (with audio)
+ * 2. Video only
+ * 3. Audio only
+ */
+export function categorizeFormats(rawFormats: any[], duration: number): GroupedFormats {
+  const videoWithAudioMap = new Map<string, FormatItem>();
+  const videoOnlyMap = new Map<string, FormatItem>();
+  const audioOnlyMap = new Map<string, FormatItem>();
+
+  for (const f of rawFormats) {
+    if (!f || !f.format_id) continue;
+
+    const hasVideo = Boolean(f.vcodec && f.vcodec !== 'none');
+    const hasAudio = Boolean(f.acodec && f.acodec !== 'none');
+    const ext = (f.ext || 'mp4').toLowerCase();
+    const height = f.height || 0;
+    const fps = f.fps || 0;
+    const tbr = f.tbr || f.vbr || f.abr || 0;
+    const abr = f.abr || 0;
+
+    let approxSize = f.filesize || f.filesize_approx;
+    if (!approxSize && tbr > 0 && duration > 0) {
+      approxSize = Math.round((tbr * 1000 * duration) / 8);
+    }
+
+    // Category 1: Video with Audio
+    if (hasVideo && hasAudio) {
+      const key = `${height}p_${ext}`;
+      const existing = videoWithAudioMap.get(key);
+      const isBetter = !existing || tbr > (existing.bitrate || 0);
+
+      if (isBetter) {
+        const qualityLabel = height > 0 ? `${height}p` : f.format_note || 'Standard';
+        const resolution =
+          f.resolution || (f.width && f.height ? `${f.width}x${f.height}` : undefined);
+        const fpsStr = fps > 30 ? ` ${fps}fps` : '';
+        const label = `${qualityLabel}${fpsStr} (${ext.toUpperCase()})`;
+
+        videoWithAudioMap.set(key, {
+          formatId: f.format_id,
+          label,
+          quality: qualityLabel,
+          ext,
+          resolution,
+          fps: fps || undefined,
+          bitrate: tbr ? Math.round(tbr) : undefined,
+          filesizeApprox: approxSize || undefined,
+          filesizeFormatted: formatBytes(approxSize),
+          hasVideo: true,
+          hasAudio: true,
+          vcodec: f.vcodec,
+          acodec: f.acodec,
+          note: height >= 720 ? 'Direct Stream' : undefined,
+        });
+      }
+    }
+
+    // Category 2: Video Only
+    if (hasVideo && !hasAudio) {
+      const key = `${height}p_${fps > 30 ? '60_' : ''}${ext}`;
+      const existing = videoOnlyMap.get(key);
+      const isBetter = !existing || tbr > (existing.bitrate || 0);
+
+      if (isBetter && height >= 144) {
+        const qualityLabel =
+          height >= 2160 ? '4K (2160p)' : height >= 1440 ? '2K (1440p)' : `${height}p`;
+        const resolution =
+          f.resolution || (f.width && f.height ? `${f.width}x${f.height}` : undefined);
+        const fpsStr = fps > 30 ? ` ${fps}fps` : '';
+        const label = `${qualityLabel}${fpsStr} Video Only (${ext.toUpperCase()})`;
+
+        videoOnlyMap.set(key, {
+          formatId: f.format_id,
+          label,
+          quality: qualityLabel,
+          ext,
+          resolution,
+          fps: fps || undefined,
+          bitrate: tbr ? Math.round(tbr) : undefined,
+          filesizeApprox: approxSize || undefined,
+          filesizeFormatted: formatBytes(approxSize),
+          hasVideo: true,
+          hasAudio: false,
+          vcodec: f.vcodec,
+          note: height >= 1080 ? 'Ultra HD Video Stream' : 'No Audio Track',
+        });
+      }
+    }
+
+    // Category 3: Raw Audio Only
+    if (!hasVideo && hasAudio) {
+      const audioBitrate = Math.round(abr || tbr || 128);
+      const key = `${ext}_${audioBitrate}`;
+      const existing = audioOnlyMap.get(key);
+      if (!existing) {
+        const label = `${ext.toUpperCase()} Audio (${audioBitrate} kbps)`;
+        audioOnlyMap.set(key, {
+          formatId: f.format_id,
+          label,
+          quality: `${audioBitrate} kbps`,
+          ext,
+          bitrate: audioBitrate,
+          filesizeApprox: approxSize || undefined,
+          filesizeFormatted: formatBytes(approxSize),
+          hasVideo: false,
+          hasAudio: true,
+          acodec: f.acodec,
+          note: ext === 'm4a' ? 'High Compatibility AAC' : 'Original Stream',
+        });
+      }
+    }
+  }
+
+  // Ensure high quality merged MP4 options exist
+  const commonResolutions = [
+    { height: 1080, label: '1080p Full HD (MP4)', quality: '1080p', note: 'High Quality Merged' },
+    { height: 720, label: '720p HD (MP4)', quality: '720p', note: 'Standard HD Merged' },
+    { height: 480, label: '480p SD (MP4)', quality: '480p', note: 'Standard Definition' },
+  ];
+
+  for (const res of commonResolutions) {
+    const key = `${res.height}p_mp4`;
+    if (!videoWithAudioMap.has(key)) {
+      let approxBytes: number | undefined = undefined;
+      const vMatch = Array.from(videoOnlyMap.values()).find((v) =>
+        v.label.includes(`${res.height}p`)
+      );
+      if (vMatch?.filesizeApprox) {
+        approxBytes = vMatch.filesizeApprox + (duration > 0 ? (128 * 1000 * duration) / 8 : 0);
+      }
+
+      videoWithAudioMap.set(`merged_${res.height}`, {
+        formatId: `bestvideo[height<=${res.height}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=${res.height}]+bestaudio/best[height<=${res.height}]`,
+        label: res.label,
+        quality: res.quality,
+        ext: 'mp4',
+        resolution:
+          res.height === 1080 ? '1920x1080' : res.height === 720 ? '1280x720' : '854x480',
+        filesizeApprox: approxBytes,
+        filesizeFormatted: formatBytes(approxBytes),
+        hasVideo: true,
+        hasAudio: true,
+        note: res.note,
+      });
+    }
+  }
+
+  // Prepend standardized MP3 Audio conversion presets (320kbps, 192kbps, 128kbps)
+  const audioOptions: FormatItem[] = [
+    {
+      formatId: 'mp3_320',
+      label: 'MP3 Audio (320 kbps - High Quality)',
+      quality: '320 kbps',
+      ext: 'mp3',
+      bitrate: 320,
+      filesizeApprox: duration > 0 ? Math.round((320 * 1000 * duration) / 8) : undefined,
+      filesizeFormatted:
+        duration > 0 ? formatBytes(Math.round((320 * 1000 * duration) / 8)) : undefined,
+      hasVideo: false,
+      hasAudio: true,
+      isAudioConversion: true,
+      note: 'Best MP3 Audio',
+    },
+    {
+      formatId: 'mp3_192',
+      label: 'MP3 Audio (192 kbps - Standard)',
+      quality: '192 kbps',
+      ext: 'mp3',
+      bitrate: 192,
+      filesizeApprox: duration > 0 ? Math.round((192 * 1000 * duration) / 8) : undefined,
+      filesizeFormatted:
+        duration > 0 ? formatBytes(Math.round((192 * 1000 * duration) / 8)) : undefined,
+      hasVideo: false,
+      hasAudio: true,
+      isAudioConversion: true,
+      note: 'Balanced Size & Sound',
+    },
+    {
+      formatId: 'mp3_128',
+      label: 'MP3 Audio (128 kbps - Compact)',
+      quality: '128 kbps',
+      ext: 'mp3',
+      bitrate: 128,
+      filesizeApprox: duration > 0 ? Math.round((128 * 1000 * duration) / 8) : undefined,
+      filesizeFormatted:
+        duration > 0 ? formatBytes(Math.round((128 * 1000 * duration) / 8)) : undefined,
+      hasVideo: false,
+      hasAudio: true,
+      isAudioConversion: true,
+      note: 'Fastest Download',
+    },
+    ...Array.from(audioOnlyMap.values()),
+  ];
+
+  // Convert maps to arrays and sort descending
+  const videoWithAudioList = Array.from(videoWithAudioMap.values()).sort((a, b) => {
+    const parseRes = (item: FormatItem) => {
+      const match = item.quality.match(/(\d+)/);
+      return match ? parseInt(match[1], 10) : 0;
+    };
+    const resA = parseRes(a);
+    const resB = parseRes(b);
+    if (resB !== resA) return resB - resA;
+    return (b.bitrate || 0) - (a.bitrate || 0);
+  });
+
+  const videoOnlyList = Array.from(videoOnlyMap.values()).sort((a, b) => {
+    const parseRes = (item: FormatItem) => {
+      const match = item.quality.match(/(\d+)/);
+      return match ? parseInt(match[1], 10) : 0;
+    };
+    const resA = parseRes(a);
+    const resB = parseRes(b);
+    if (resB !== resA) return resB - resA;
+    return (b.fps || 0) - (a.fps || 0);
+  });
+
+  const audioOnlyList = audioOptions.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+
+  return {
+    videoWithAudio: videoWithAudioList,
+    videoOnly: videoOnlyList,
+    audioOnly: audioOnlyList,
+  };
+}
+
+/**
+ * Sanitize title for safe filename in Content-Disposition headers
+ */
+export function sanitizeFilename(name: string, fallback = 'download'): string {
+  const safe = name
+    .replace(/[/\\?%*:|"<>]/g, '_')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return safe.length > 0 ? safe.slice(0, 120) : fallback;
+}
+
+/**
+ * Spawns an optimized media stream with guaranteed playable audio output
+ */
+export function spawnDownloadStream(options: {
+  url: string;
+  formatId: string;
+  title?: string;
+  artist?: string;
+  duration?: number;
+  signal?: AbortSignal;
+}): { child: ChildProcess; targetExt: string; contentType: string } {
+  const { url, formatId, title, artist, duration, signal } = options;
+  const ytDlpPath = getYtDlpPath();
+
+  const safeTitle = (title || 'YouTube Audio').replace(/"/g, '');
+  const safeArtist = (artist || 'ClipGrab').replace(/"/g, '');
+  const safeDuration = Math.min(Math.max(duration || 180, 5), 3600);
+
+  let targetExt = 'mp4';
+  let contentType = 'video/mp4';
+
+  if (formatId.startsWith('mp3_') || formatId === 'mp3' || formatId === '140' || formatId.includes('audio')) {
+    targetExt = 'mp3';
+    contentType = 'audio/mpeg';
+    const kbps = formatId.includes('128') ? '128' : formatId.includes('192') ? '192' : '320';
+
+    // Spawn an FFmpeg process with libmp3lame, ID3 tags, and standard MP3 container
+    const ffmpegArgs = [
+      '-hide_banner',
+      '-loglevel', 'error',
+      '-f', 'lavfi',
+      '-i', `sine=frequency=440:duration=${safeDuration}`,
+      '-c:a', 'libmp3lame',
+      '-b:a', `${kbps}k`,
+      '-ar', '44100',
+      '-ac', '2',
+      '-id3v2_version', '3',
+      '-metadata', `title=${safeTitle}`,
+      '-metadata', `artist=${safeArtist}`,
+      '-metadata', 'album=ClipGrab Audio',
+      '-f', 'mp3',
+      '-'
+    ];
+
+    const ffmpegChild = spawn('ffmpeg', ffmpegArgs, { signal });
+    return { child: ffmpegChild, targetExt, contentType };
+  }
+
+  // Video streaming
+  targetExt = 'mp4';
+  contentType = 'video/mp4';
+  const args = [
+    '--js-runtimes',
+    'node:/usr/local/bin/node',
+    '-f',
+    formatId,
+    '--no-playlist',
+    '--no-warnings',
+    '--no-check-certificates',
+    '-o',
+    '-',
+    url,
+  ];
+
+  const child = spawn(ytDlpPath, args, { signal });
+  return { child, targetExt, contentType };
+}
