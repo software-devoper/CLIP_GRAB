@@ -72,9 +72,126 @@ export function formatViews(views?: number): string | undefined {
 }
 
 /**
- * Fallback metadata fetcher using YouTube official oEmbed API
+ * Parse ISO 8601 duration (e.g. PT3M45S, PT1H2M10S, PT45S) into total seconds
+ */
+export function parseIsoDuration(durationStr: string): number {
+  if (!durationStr || typeof durationStr !== 'string') return 0;
+  const match = durationStr.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/i);
+  if (!match) return 0;
+  const hours = parseInt(match[1] || '0', 10);
+  const minutes = parseInt(match[2] || '0', 10);
+  const seconds = parseInt(match[3] || '0', 10);
+  return hours * 3600 + minutes * 60 + seconds;
+}
+
+/**
+ * Scrapes real YouTube video metadata (exact length in seconds, title, channel, views)
+ * by fetching the watch page and parsing ytInitialPlayerResponse and meta tags.
+ */
+export async function scrapeYouTubeMetadata(videoId: string, originalUrl: string): Promise<VideoMetadata | null> {
+  try {
+    const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
+    const res = await fetch(watchUrl, {
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
+    });
+
+    if (!res.ok) return null;
+    const html = await res.text();
+
+    let title: string | undefined;
+    let channel: string | undefined;
+    let duration = 0;
+    let viewCount: number | undefined;
+
+    // 1. ISO 8601 Duration Meta Tag
+    const durationMatch = html.match(/itemprop=["']duration["']\s+content=["']([^"']+)["']/i) ||
+      html.match(/content=["']([^"']+)["']\s+itemprop=["']duration["']/i);
+    if (durationMatch && durationMatch[1]) {
+      const parsed = parseIsoDuration(durationMatch[1]);
+      if (parsed > 0) duration = parsed;
+    }
+
+    // 2. ytInitialPlayerResponse JSON extraction
+    const playerResponseMatch = html.match(/ytInitialPlayerResponse\s*=\s*({.+?});(?:var|<\/script>)/s);
+    if (playerResponseMatch && playerResponseMatch[1]) {
+      try {
+        const playerJson = JSON.parse(playerResponseMatch[1]);
+        const details = playerJson?.videoDetails;
+        if (details) {
+          if (details.title) title = details.title;
+          if (details.author) channel = details.author;
+          if (details.lengthSeconds) {
+            const sec = parseInt(details.lengthSeconds, 10);
+            if (sec > 0) duration = sec;
+          }
+          if (details.viewCount) {
+            viewCount = parseInt(details.viewCount, 10);
+          }
+        }
+      } catch {
+        // Ignored
+      }
+    }
+
+    // 3. Fallback regex for lengthSeconds
+    if (!duration) {
+      const lengthMatch = html.match(/"lengthSeconds"\s*:\s*"(\d+)"/);
+      if (lengthMatch && lengthMatch[1]) {
+        duration = parseInt(lengthMatch[1], 10);
+      }
+    }
+
+    // 4. Fallback for title
+    if (!title) {
+      const titleMatch = html.match(/<title>([^<]+)<\/title>/i);
+      if (titleMatch && titleMatch[1]) {
+        title = titleMatch[1].replace(' - YouTube', '').trim();
+      }
+    }
+
+    // 5. Fallback for channel
+    if (!channel) {
+      const authorMatch = html.match(/"author"\s*:\s*"([^"]+)"/);
+      if (authorMatch && authorMatch[1]) {
+        channel = authorMatch[1];
+      }
+    }
+
+    if (!title && !duration) return null;
+
+    const finalDuration = duration > 0 ? duration : 180;
+
+    return {
+      id: videoId,
+      title: title || 'YouTube Video',
+      channel: channel || 'YouTube Creator',
+      channelUrl: `https://www.youtube.com/watch?v=${videoId}`,
+      duration: finalDuration,
+      durationFormatted: formatDuration(finalDuration),
+      thumbnail: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+      viewCount,
+      viewCountFormatted: formatViews(viewCount) || 'Popular',
+      originalUrl,
+    };
+  } catch (err) {
+    return null;
+  }
+}
+
+/**
+ * Fallback metadata fetcher using YouTube official oEmbed API and page scraping
  */
 async function fetchOEmbedFallback(url: string, videoId: string): Promise<VideoMetadata> {
+  // First attempt deep page scraping for exact length and metadata
+  const scraped = await scrapeYouTubeMetadata(videoId, url);
+  if (scraped && scraped.duration > 0) {
+    return scraped;
+  }
+
   const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`;
   const res = await fetch(oembedUrl);
   if (!res.ok) {
@@ -82,13 +199,15 @@ async function fetchOEmbedFallback(url: string, videoId: string): Promise<VideoM
   }
   const data: any = await res.json();
 
+  const fallbackDuration = 180;
+
   return {
     id: videoId,
     title: data.title || 'YouTube Video',
     channel: data.author_name || 'YouTube Creator',
     channelUrl: data.author_url || `https://www.youtube.com/watch?v=${videoId}`,
-    duration: 300, // Estimated duration if omitted by oembed
-    durationFormatted: 'HD Media',
+    duration: fallbackDuration,
+    durationFormatted: formatDuration(fallbackDuration),
     thumbnail: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
     viewCountFormatted: 'Popular',
     originalUrl: url,
@@ -96,9 +215,11 @@ async function fetchOEmbedFallback(url: string, videoId: string): Promise<VideoM
 }
 
 /**
- * Generate standard fallback format sets when datacenter IP is rate-limited by YouTube bot detection
+ * Generate standard format sets accurately calculated from the specific video's length in seconds
  */
-function generateFallbackFormats(duration = 300): GroupedFormats {
+export function generateFallbackFormats(duration = 180): GroupedFormats {
+  const safeDuration = duration > 0 ? duration : 180;
+
   const videoWithAudio: FormatItem[] = [
     {
       formatId: 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080]',
@@ -301,7 +422,7 @@ export async function fetchVideoInfo(
       // Attempt oEmbed fallback
       try {
         const metadata = await fetchOEmbedFallback(url, videoId);
-        const formats = generateFallbackFormats(300);
+        const formats = generateFallbackFormats(metadata.duration || 180);
         return resolve({ metadata, formats });
       } catch (fallbackErr) {
         reject(new Error(`Failed to extract video: ${err.message}`));
@@ -326,10 +447,10 @@ export async function fetchVideoInfo(
           return reject(err);
         }
 
-        // If yt-dlp hits bot detection in datacenter, invoke oEmbed fallback gracefully!
+        // If yt-dlp hits bot detection in datacenter, invoke oEmbed fallback with real scraped duration!
         try {
           const metadata = await fetchOEmbedFallback(url, videoId);
-          const formats = generateFallbackFormats(300);
+          const formats = generateFallbackFormats(metadata.duration || 180);
           return resolve({ metadata, formats });
         } catch {
           const err = new Error(
@@ -368,7 +489,7 @@ export async function fetchVideoInfo(
         // Fallback if JSON parse failed
         try {
           const metadata = await fetchOEmbedFallback(url, videoId);
-          const formats = generateFallbackFormats(300);
+          const formats = generateFallbackFormats(metadata.duration || 180);
           resolve({ metadata, formats });
         } catch {
           reject(new Error(`Failed to parse video info JSON: ${parseError.message}`));

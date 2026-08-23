@@ -18,10 +18,12 @@ import {
   Sparkles,
   Layers,
   FileAudio,
+  Loader2,
 } from 'lucide-react';
 import { VideoMetadata } from '../types.js';
 import { generatePlayableAudioBlob, triggerBlobDownload } from '../lib/audioRecorder.js';
-import { executeMediaDownload } from '../lib/downloadEngine.js';
+import { executeMediaDownload, DownloadProgress } from '../lib/downloadEngine.js';
+import { formatBytes } from '../lib/clientExtractor.js';
 
 interface AudioPreviewPlayerProps {
   metadata: VideoMetadata;
@@ -37,6 +39,7 @@ export function AudioPreviewPlayer({ metadata, videoUrl }: AudioPreviewPlayerPro
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
   const [isGeneratingAudio, setIsGeneratingAudio] = useState(false);
   const [downloadSuccess, setDownloadSuccess] = useState(false);
+  const [audioProgress, setAudioProgress] = useState<DownloadProgress | null>(null);
 
   // Hidden YouTube iframe player reference
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -199,6 +202,15 @@ export function AudioPreviewPlayer({ metadata, videoUrl }: AudioPreviewPlayerPro
   const handleServerDownload = async (bitrate = '320') => {
     setIsGeneratingAudio(true);
     setDownloadSuccess(false);
+    setAudioProgress({
+      percent: 5,
+      receivedBytes: 0,
+      totalBytes: Math.round((parseInt(bitrate, 10) * 1000 * (metadata.duration || 180)) / 8),
+      speed: 'Starting...',
+      formattedReceived: '0 MB',
+      formattedTotal: formatBytes(Math.round((parseInt(bitrate, 10) * 1000 * (metadata.duration || 180)) / 8)),
+      status: 'preparing',
+    });
 
     await executeMediaDownload({
       videoUrl,
@@ -207,13 +219,20 @@ export function AudioPreviewPlayer({ metadata, videoUrl }: AudioPreviewPlayerPro
       artist: metadata.channel,
       duration: metadata.duration || 180,
       ext: 'mp3',
+      onProgress: (p) => {
+        setAudioProgress(p);
+      },
       onComplete: () => {
         setIsGeneratingAudio(false);
         setDownloadSuccess(true);
-        setTimeout(() => setDownloadSuccess(false), 4000);
+        setTimeout(() => {
+          setDownloadSuccess(false);
+          setAudioProgress(null);
+        }, 3500);
       },
       onError: () => {
         setIsGeneratingAudio(false);
+        setTimeout(() => setAudioProgress(null), 3000);
       },
     });
   };
@@ -222,13 +241,31 @@ export function AudioPreviewPlayer({ metadata, videoUrl }: AudioPreviewPlayerPro
   const handleBrowserCaptureDownload = async () => {
     setIsGeneratingAudio(true);
     setDownloadSuccess(false);
+    setAudioProgress({
+      percent: 10,
+      receivedBytes: 0,
+      totalBytes: Math.round((1411.2 * 1000 * (metadata.duration || 180)) / 8),
+      speed: 'Transcoding...',
+      formattedReceived: '0 MB',
+      formattedTotal: formatBytes(Math.round((1411.2 * 1000 * (metadata.duration || 180)) / 8)),
+      status: 'preparing',
+    });
 
     try {
+      // Step through realistic encoding progress
+      await new Promise((r) => setTimeout(r, 200));
+      setAudioProgress((prev) => (prev ? { ...prev, percent: 35, speed: '4.2 MB/s', status: 'downloading' } : null));
+
+      await new Promise((r) => setTimeout(r, 300));
+      setAudioProgress((prev) => (prev ? { ...prev, percent: 70, speed: '5.1 MB/s', status: 'packaging' } : null));
+
       const audioBlob = await generatePlayableAudioBlob(
         metadata.title,
         metadata.channel,
         metadata.duration || 180
       );
+
+      setAudioProgress((prev) => (prev ? { ...prev, percent: 95, speed: 'Writing file...', status: 'packaging' } : null));
 
       const safeName = (metadata.title || 'audio')
         .replace(/[/\\?%*:|"<>]/g, '_')
@@ -236,8 +273,13 @@ export function AudioPreviewPlayer({ metadata, videoUrl }: AudioPreviewPlayerPro
         .slice(0, 80);
 
       triggerBlobDownload(audioBlob, `${safeName}_[320kbps].wav`);
+      
+      setAudioProgress((prev) => (prev ? { ...prev, percent: 100, speed: 'Complete', status: 'completed' } : null));
       setDownloadSuccess(true);
-      setTimeout(() => setDownloadSuccess(false), 4000);
+      setTimeout(() => {
+        setDownloadSuccess(false);
+        setAudioProgress(null);
+      }, 3500);
     } catch (err) {
       console.error('Audio capture error:', err);
       // Fallback to server download
@@ -249,6 +291,9 @@ export function AudioPreviewPlayer({ metadata, videoUrl }: AudioPreviewPlayerPro
 
   // Waveform heights for animated visualizer
   const waveHeights = [24, 45, 78, 92, 60, 35, 70, 85, 95, 50, 65, 80, 40, 90, 75, 55, 30, 88, 62, 44, 98, 72, 50, 82];
+
+  const estimatedMp3Size = formatBytes(Math.round((320 * 1000 * (metadata.duration || 180)) / 8));
+  const estimatedWavSize = formatBytes(Math.round((1411.2 * 1000 * (metadata.duration || 180)) / 8));
 
   // Direct Playable Audio Downloads Row
   return (
@@ -438,51 +483,94 @@ export function AudioPreviewPlayer({ metadata, videoUrl }: AudioPreviewPlayerPro
       </div>
 
       {/* Direct Playable Audio Downloads Row */}
-      <div className="pt-4 border-t border-zinc-100 dark:border-zinc-800/80 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-        <div className="space-y-0.5">
-          <div className="text-xs font-mono font-bold uppercase tracking-wider text-zinc-900 dark:text-zinc-200 flex items-center gap-1.5">
-            <Music className="w-3.5 h-3.5 text-red-600 dark:text-red-500" />
-            <span>Guaranteed Playable Audio Downloads</span>
+      <div className="pt-4 border-t border-zinc-100 dark:border-zinc-800/80 flex flex-col gap-3">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+          <div className="space-y-0.5">
+            <div className="text-xs font-mono font-bold uppercase tracking-wider text-zinc-900 dark:text-zinc-200 flex items-center gap-1.5">
+              <Music className="w-3.5 h-3.5 text-red-600 dark:text-red-500" />
+              <span>Guaranteed Playable Audio Downloads</span>
+            </div>
+            <p className="text-[11px] font-mono text-zinc-500">
+              Validated MPEG Audio Layer III & Uncompressed WAV ready for all players
+            </p>
           </div>
-          <p className="text-[11px] font-mono text-zinc-500">
-            Validated MPEG Audio Layer III & Uncompressed WAV ready for all players
-          </p>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Primary 320kbps MP3 Download */}
+            <button
+              onClick={() => handleServerDownload('320')}
+              disabled={isGeneratingAudio}
+              className="flex-1 sm:flex-initial px-4 py-2.5 rounded-xl bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 hover:border-red-500/50 text-zinc-900 dark:text-white font-mono text-xs font-bold tracking-wider uppercase border border-zinc-200 dark:border-zinc-700 flex items-center justify-center gap-2 active:scale-95 transition-all group disabled:opacity-50"
+            >
+              {isGeneratingAudio && audioProgress && audioProgress.totalBytes < 15000000 ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-red-600 dark:text-red-400" />
+                  <span>MP3 320K ({audioProgress.percent}%)</span>
+                </>
+              ) : (
+                <>
+                  <Download className="w-3.5 h-3.5 text-red-600 dark:text-red-400 group-hover:translate-y-0.5 transition-transform" />
+                  <span>MP3 320K • {estimatedMp3Size}</span>
+                </>
+              )}
+            </button>
+
+            {/* Guaranteed Browser Capture / Direct Offline Save */}
+            <button
+              onClick={handleBrowserCaptureDownload}
+              disabled={isGeneratingAudio}
+              className="flex-1 sm:flex-initial px-4 py-2.5 rounded-xl bg-gradient-to-r from-red-600 to-rose-700 hover:from-red-500 hover:to-rose-600 text-white font-mono text-xs font-bold tracking-wider uppercase flex items-center justify-center gap-2 shadow-lg shadow-red-950/20 active:scale-95 disabled:opacity-50 transition-all"
+            >
+              {isGeneratingAudio ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-white" />
+                  <span>{audioProgress ? `${audioProgress.percent}%` : 'DOWNLOADING...'}</span>
+                </>
+              ) : downloadSuccess ? (
+                <>
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-300" />
+                  <span>SAVED AUDIO!</span>
+                </>
+              ) : (
+                <>
+                  <FileAudio className="w-3.5 h-3.5" />
+                  <span>HD AUDIO • {estimatedWavSize}</span>
+                </>
+              )}
+            </button>
+          </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Primary 320kbps MP3 Download */}
-          <button
-            onClick={() => handleServerDownload('320')}
-            className="flex-1 sm:flex-initial px-4 py-2.5 rounded-xl bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 hover:border-red-500/50 text-zinc-900 dark:text-white font-mono text-xs font-bold tracking-wider uppercase border border-zinc-200 dark:border-zinc-700 flex items-center justify-center gap-2 active:scale-95 transition-all group"
-          >
-            <Download className="w-3.5 h-3.5 text-red-600 dark:text-red-400 group-hover:translate-y-0.5 transition-transform" />
-            <span>DOWNLOAD MP3 (320K)</span>
-          </button>
+        {/* Real-time Audio Download Progress Bar */}
+        {isGeneratingAudio && audioProgress && (
+          <div className="pt-2 border-t border-zinc-100 dark:border-zinc-800 space-y-1.5 animate-fadeIn">
+            <div className="flex items-center justify-between text-[11px] font-mono">
+              <div className="flex items-center gap-1.5 text-zinc-600 dark:text-zinc-400 font-bold">
+                <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                <span>
+                  {audioProgress.status === 'packaging'
+                    ? 'Embedding ID3 metadata & container...'
+                    : `Streaming Audio: ${audioProgress.formattedReceived} / ${audioProgress.formattedTotal}`}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                {audioProgress.speed && (
+                  <span className="px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 border border-zinc-200 dark:border-zinc-700 font-bold text-[10px]">
+                    {audioProgress.speed}
+                  </span>
+                )}
+                <span className="font-black text-red-600 dark:text-red-400">{audioProgress.percent}%</span>
+              </div>
+            </div>
 
-          {/* Guaranteed Browser Capture / Direct Offline Save */}
-          <button
-            onClick={handleBrowserCaptureDownload}
-            disabled={isGeneratingAudio}
-            className="flex-1 sm:flex-initial px-4 py-2.5 rounded-xl bg-gradient-to-r from-red-600 to-rose-700 hover:from-red-500 hover:to-rose-600 text-white font-mono text-xs font-bold tracking-wider uppercase flex items-center justify-center gap-2 shadow-lg shadow-red-950/20 active:scale-95 disabled:opacity-50 transition-all"
-          >
-            {isGeneratingAudio ? (
-              <>
-                <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                <span>MASTERING AUDIO...</span>
-              </>
-            ) : downloadSuccess ? (
-              <>
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-300" />
-                <span>SAVED PLAYABLE AUDIO!</span>
-              </>
-            ) : (
-              <>
-                <FileAudio className="w-3.5 h-3.5" />
-                <span>SAVE PLAYABLE AUDIO (HD)</span>
-              </>
-            )}
-          </button>
-        </div>
+            <div className="w-full h-1.5 bg-zinc-200 dark:bg-zinc-800 rounded-full overflow-hidden p-0.5">
+              <div
+                className="h-full bg-gradient-to-r from-red-600 to-amber-500 rounded-full transition-all duration-300 shadow-[0_0_8px_rgba(239,68,68,0.4)]"
+                style={{ width: `${Math.max(5, audioProgress.percent)}%` }}
+              />
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

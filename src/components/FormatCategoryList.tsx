@@ -7,12 +7,16 @@ interface FormatCategoryListProps {
   formats: GroupedFormats;
   videoUrl: string;
   videoTitle: string;
+  duration?: number;
+  artist?: string;
 }
 
 export const FormatCategoryList: React.FC<FormatCategoryListProps> = ({
   formats,
   videoUrl,
   videoTitle,
+  duration,
+  artist,
 }) => {
   const [activeTab, setActiveTab] = useState<FormatCategory | 'all'>('videoWithAudio');
 
@@ -128,6 +132,8 @@ export const FormatCategoryList: React.FC<FormatCategoryListProps> = ({
                       format={item}
                       videoUrl={videoUrl}
                       videoTitle={videoTitle}
+                      duration={duration}
+                      artist={artist}
                     />
                   ))}
                 </div>

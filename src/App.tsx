@@ -159,6 +159,8 @@ export default function App() {
                 formats={formats}
                 videoUrl={currentUrl}
                 videoTitle={metadata.title}
+                duration={metadata.duration}
+                artist={metadata.channel}
               />
             </div>
           )}
