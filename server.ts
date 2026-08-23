@@ -200,6 +200,12 @@ app.get('/api/download', (req: Request, res: Response): void => {
   if (stream) {
     sendHeadersIfNeeded();
     stream.pipe(res);
+    stream.on('error', (err) => {
+      if (cleanup) cleanup();
+      if (!res.headersSent) {
+        res.status(500).send('Streaming error');
+      }
+    });
     req.on('close', () => {
       abortController.abort();
       if (cleanup) cleanup();
