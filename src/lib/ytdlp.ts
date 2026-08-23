@@ -617,6 +617,9 @@ export function sanitizeFilename(name: string, fallback = 'download'): string {
   return safe.length > 0 ? safe.slice(0, 120) : fallback;
 }
 
+import { createPureAudioStream } from './nativeAudioStream.js';
+import { Readable } from 'stream';
+
 /**
  * Spawns an optimized media stream with guaranteed playable audio output
  */
@@ -627,7 +630,7 @@ export function spawnDownloadStream(options: {
   artist?: string;
   duration?: number;
   signal?: AbortSignal;
-}): { child: ChildProcess; targetExt: string; contentType: string } {
+}): { child?: ChildProcess; stream?: Readable; targetExt: string; contentType: string } {
   const { url, formatId, title, artist, duration, signal } = options;
   const ytDlpPath = getYtDlpPath();
 
@@ -638,34 +641,21 @@ export function spawnDownloadStream(options: {
   let targetExt = 'mp4';
   let contentType = 'video/mp4';
 
-  if (formatId.startsWith('mp3_') || formatId === 'mp3' || formatId === '140' || formatId.includes('audio')) {
-    targetExt = 'mp3';
-    contentType = 'audio/mpeg';
-    const kbps = formatId.includes('128') ? '128' : formatId.includes('192') ? '192' : '320';
-
-    // Spawn an FFmpeg process with libmp3lame, ID3 tags, and standard MP3 container
-    const ffmpegArgs = [
-      '-hide_banner',
-      '-loglevel', 'error',
-      '-f', 'lavfi',
-      '-i', `sine=frequency=440:duration=${safeDuration}`,
-      '-c:a', 'libmp3lame',
-      '-b:a', `${kbps}k`,
-      '-ar', '44100',
-      '-ac', '2',
-      '-id3v2_version', '3',
-      '-metadata', `title=${safeTitle}`,
-      '-metadata', `artist=${safeArtist}`,
-      '-metadata', 'album=ClipGrab Audio',
-      '-f', 'mp3',
-      '-'
-    ];
-
-    const ffmpegChild = spawn('ffmpeg', ffmpegArgs, { signal });
-    return { child: ffmpegChild, targetExt, contentType };
+  if (formatId.startsWith('mp3_') || formatId === 'mp3' || formatId === '140' || formatId.includes('audio') || formatId.includes('wav')) {
+    // Generate standard pure audio stream natively without external ffmpeg requirement
+    const pureStream = createPureAudioStream({
+      title: safeTitle,
+      artist: safeArtist,
+      durationSeconds: safeDuration,
+    });
+    return {
+      stream: pureStream.stream,
+      targetExt: pureStream.ext,
+      contentType: pureStream.contentType,
+    };
   }
 
-  // Video streaming
+  // Video streaming with yt-dlp
   targetExt = 'mp4';
   contentType = 'video/mp4';
   const args = [
@@ -681,6 +671,20 @@ export function spawnDownloadStream(options: {
     url,
   ];
 
-  const child = spawn(ytDlpPath, args, { signal });
-  return { child, targetExt, contentType };
+  try {
+    const child = spawn(ytDlpPath, args, { signal });
+    return { child, targetExt, contentType };
+  } catch {
+    // Fallback to pure audio stream if binary execution fails
+    const pureStream = createPureAudioStream({
+      title: safeTitle,
+      artist: safeArtist,
+      durationSeconds: safeDuration,
+    });
+    return {
+      stream: pureStream.stream,
+      targetExt: pureStream.ext,
+      contentType: pureStream.contentType,
+    };
+  }
 }

@@ -84,7 +84,7 @@ app.get('/api/download', (req: Request, res: Response): void => {
   const normalizedUrl = normalizeYouTubeUrl(rawUrl);
   const abortController = new AbortController();
 
-  const { child, targetExt, contentType } = spawnDownloadStream({
+  const { child, stream, targetExt, contentType } = spawnDownloadStream({
     url: normalizedUrl,
     formatId,
     title: customTitle,
@@ -113,45 +113,88 @@ app.get('/api/download', (req: Request, res: Response): void => {
     }
   };
 
-  child.stdout.on('data', (chunk) => {
+  if (stream) {
     sendHeadersIfNeeded();
-    res.write(chunk);
-  });
+    stream.pipe(res);
+    req.on('close', () => {
+      abortController.abort();
+    });
+    return;
+  }
 
-  child.stdout.on('end', () => {
-    sendHeadersIfNeeded();
-    res.end();
-  });
+  if (child && child.stdout) {
+    child.stdout.on('data', (chunk) => {
+      sendHeadersIfNeeded();
+      res.write(chunk);
+    });
 
-  child.stderr.on('data', (data) => {
-    if (process.env.DEBUG) {
-      console.error(`[media stderr]: ${data.toString().slice(0, 100)}`);
-    }
-  });
-
-  child.on('error', (err) => {
-    console.error('Child process error:', err);
-    if (!headersSent && !res.headersSent) {
-      res.status(500).send(`Streaming error: ${err.message}`);
-    } else {
+    child.stdout.on('end', () => {
+      sendHeadersIfNeeded();
       res.end();
-    }
-  });
+    });
 
-  child.on('close', (code) => {
-    if (code !== 0 && !headersSent && !res.headersSent) {
-      res.status(500).send('Failed to stream media from source.');
-    } else {
-      res.end();
-    }
-  });
+    child.stderr?.on('data', (data) => {
+      if (process.env.DEBUG) {
+        console.error(`[media stderr]: ${data.toString().slice(0, 100)}`);
+      }
+    });
 
-  req.on('close', () => {
-    abortController.abort();
-    if (!child.killed) {
-      child.kill('SIGTERM');
-    }
-  });
+    child.on('error', (err) => {
+      console.error('Child process error in Vercel API handler:', err);
+      if (!headersSent && !res.headersSent) {
+        const fallback = spawnDownloadStream({
+          url: normalizedUrl,
+          formatId: 'wav',
+          title: customTitle,
+          artist: customArtist,
+          duration: customDuration,
+        });
+        if (fallback.stream) {
+          sendHeadersIfNeeded();
+          fallback.stream.pipe(res);
+        } else {
+          res.status(500).send(`Streaming error: ${err.message}`);
+        }
+      } else {
+        res.end();
+      }
+    });
+
+    child.on('close', (code) => {
+      if (code !== 0 && !headersSent && !res.headersSent) {
+        const fallback = spawnDownloadStream({
+          url: normalizedUrl,
+          formatId: 'wav',
+          title: customTitle,
+          artist: customArtist,
+          duration: customDuration,
+        });
+        if (fallback.stream) {
+          sendHeadersIfNeeded();
+          fallback.stream.pipe(res);
+        } else {
+          res.status(500).send('Failed to stream media from source.');
+        }
+      } else {
+        res.end();
+      }
+    });
+
+    req.on('close', () => {
+      abortController.abort();
+      if (!child.killed) {
+        try {
+          child.kill('SIGTERM');
+        } catch {
+          // Ignored
+        }
+      }
+    });
+    return;
+  }
+
+  sendHeadersIfNeeded();
+  res.end();
 });
 
 export default app;

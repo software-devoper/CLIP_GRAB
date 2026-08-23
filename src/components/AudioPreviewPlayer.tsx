@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { VideoMetadata } from '../types.js';
 import { generatePlayableAudioBlob, triggerBlobDownload } from '../lib/audioRecorder.js';
+import { executeMediaDownload } from '../lib/downloadEngine.js';
 
 interface AudioPreviewPlayerProps {
   metadata: VideoMetadata;
@@ -194,17 +195,27 @@ export function AudioPreviewPlayer({ metadata, videoUrl }: AudioPreviewPlayerPro
     }
   };
 
-  // Direct Server Stream Download
-  const handleServerDownload = (bitrate = '320') => {
-    const params = new URLSearchParams({
-      url: videoUrl,
+  // Direct Server Stream Download with Fallback
+  const handleServerDownload = async (bitrate = '320') => {
+    setIsGeneratingAudio(true);
+    setDownloadSuccess(false);
+
+    await executeMediaDownload({
+      videoUrl,
       formatId: `mp3_${bitrate}`,
-      title: metadata.title,
+      videoTitle: metadata.title,
       artist: metadata.channel,
-      duration: String(metadata.duration || 180),
+      duration: metadata.duration || 180,
       ext: 'mp3',
+      onComplete: () => {
+        setIsGeneratingAudio(false);
+        setDownloadSuccess(true);
+        setTimeout(() => setDownloadSuccess(false), 4000);
+      },
+      onError: () => {
+        setIsGeneratingAudio(false);
+      },
     });
-    window.location.href = `/api/download?${params.toString()}`;
   };
 
   // Guaranteed Playable Audio In-Browser Generation
