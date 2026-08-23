@@ -1,6 +1,7 @@
 {
-  "name": "ClipGrab",
-  "description": "Stateless YouTube video and audio downloader tool with multi-format streaming extraction.",
+  "name": "SaveFrom.net",
+  "description": "Online Video Downloader - Fast, free, and unlimited video and audio downloader for YouTube and other popular platforms.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
+

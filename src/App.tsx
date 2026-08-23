@@ -1,24 +1,25 @@
 /**
- * ClipGrab - Main Application Entry
+ * SaveFrom.net - The Fastest Free YouTube Video & Audio Downloader
  */
 
 import React, { useState, useEffect } from 'react';
-import { Navbar } from './components/Navbar.js';
-import { UrlInputForm } from './components/UrlInputForm.js';
-import { VideoInfoCard } from './components/VideoInfoCard.js';
-import { AudioPreviewPlayer } from './components/AudioPreviewPlayer.js';
-import { FormatCategoryList } from './components/FormatCategoryList.js';
+import { SaveFromNavbar } from './components/SaveFromNavbar.js';
+import { SaveFromHero } from './components/SaveFromHero.js';
+import { SaveFromResultCard } from './components/SaveFromResultCard.js';
+import { SaveFromHelperPromo } from './components/SaveFromHelperPromo.js';
+import { SaveFromHowTo } from './components/SaveFromHowTo.js';
+import { SaveFromFeatures } from './components/SaveFromFeatures.js';
+import { SaveFromFAQ } from './components/SaveFromFAQ.js';
+import { SaveFromFooter } from './components/SaveFromFooter.js';
 import { LoadingSkeleton } from './components/LoadingSkeleton.js';
 import { ErrorMessage } from './components/ErrorMessage.js';
-import { Footer } from './components/Footer.js';
 import { VideoMetadata, GroupedFormats, FetchInfoResponse } from './types.js';
 import { fetchMetadataClientSide } from './lib/clientExtractor.js';
-import { DownloadCloud, Sparkles, Zap, Shield } from 'lucide-react';
 
 export default function App() {
   const [darkMode, setDarkMode] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('clipgrab_theme');
+      const saved = localStorage.getItem('savefrom_theme');
       if (saved) return saved === 'dark';
       return window.matchMedia('(prefers-color-scheme: dark)').matches;
     }
@@ -31,17 +32,18 @@ export default function App() {
   const [formats, setFormats] = useState<GroupedFormats | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<any>(null);
+  const [selectedPlatform, setSelectedPlatform] = useState('youtube');
 
   // Sync dark mode class with document root and body
   useEffect(() => {
     if (darkMode) {
       document.documentElement.classList.add('dark');
       document.body.classList.add('dark');
-      localStorage.setItem('clipgrab_theme', 'dark');
+      localStorage.setItem('savefrom_theme', 'dark');
     } else {
       document.documentElement.classList.remove('dark');
       document.body.classList.remove('dark');
-      localStorage.setItem('clipgrab_theme', 'light');
+      localStorage.setItem('savefrom_theme', 'light');
     }
   }, [darkMode]);
 
@@ -76,14 +78,13 @@ export default function App() {
         }
       }
 
-      // If backend responded with 404 or failed on static host (e.g. Vercel), fallback to client extractor
-      console.info('Backend /api/fetch-info not reachable or returned error, engaging client-side fallback engine...');
+      // If backend responded with 404 or failed on static host, fallback to client extractor
+      console.info('Backend /api/fetch-info engaged client-side fallback engine...');
       const fallbackResult = await fetchMetadataClientSide(url);
       setMetadata(fallbackResult.metadata);
       setFormats(fallbackResult.formats);
     } catch (err: any) {
       try {
-        // Double fallback if fetch thrown network exception
         const fallbackResult = await fetchMetadataClientSide(url);
         setMetadata(fallbackResult.metadata);
         setFormats(fallbackResult.formats);
@@ -98,43 +99,32 @@ export default function App() {
     }
   };
 
+  const handleSelectPlatform = (platform: string) => {
+    setSelectedPlatform(platform);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   return (
     <div
       className={`min-h-screen ${
-        darkMode ? 'dark bg-zinc-950 text-zinc-100' : 'bg-zinc-50 text-zinc-900'
+        darkMode ? 'dark bg-zinc-950 text-zinc-100' : 'bg-slate-50 text-zinc-900'
       } flex flex-col font-sans transition-colors`}
     >
-      <Navbar darkMode={darkMode} onToggleDarkMode={handleToggleDarkMode} />
+      {/* SaveFrom Top Navigation */}
+      <SaveFromNavbar
+        darkMode={darkMode}
+        onToggleDarkMode={handleToggleDarkMode}
+        onSelectPlatform={handleSelectPlatform}
+      />
 
-      <main className="flex-1 max-w-5xl w-full mx-auto px-4 sm:px-6 pt-8 sm:pt-12 pb-16 space-y-10">
-        {/* Hero Section with Bold Industrial Typography */}
-        <section className="text-left sm:text-center space-y-4">
-          <div className="inline-flex items-center gap-2 px-3 py-1 text-[11px] font-mono font-bold uppercase tracking-wider text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/60 rounded-md border border-red-200/60 dark:border-red-800/40">
-            <Zap className="w-3.5 h-3.5" />
-            <span>yt-dlp Core 2024 • FFmpeg Pipeline</span>
-          </div>
-
-          <h1 className="text-5xl sm:text-7xl md:text-8xl lg:text-[96px] font-black leading-[0.85] tracking-[-0.05em] uppercase italic text-zinc-950 dark:text-white">
-            CLIP<span className="text-red-600">GRAB</span>
-          </h1>
-
-          <p className="text-zinc-500 uppercase tracking-[0.25em] text-xs font-mono font-semibold">
-            Professional Media Extraction Utility / v4.2.0
-          </p>
-
-          <p className="max-w-2xl sm:mx-auto text-xs sm:text-sm text-zinc-600 dark:text-zinc-400 leading-relaxed font-sans pt-1">
-            Stateless direct media extraction with chunked streaming. Download 4K, 1080p, 720p MP4 or convert audio to 320kbps MP3 on-the-fly. Zero server storage.
-          </p>
-        </section>
-
-        {/* URL Input Form */}
-        <section>
-          <UrlInputForm
-            onSubmit={handleFetchInfo}
-            isLoading={isLoading}
-            initialUrl={currentUrl}
-          />
-        </section>
+      <main className="flex-1 max-w-5xl w-full mx-auto px-4 sm:px-6 pt-8 sm:pt-12 pb-16 space-y-12">
+        {/* Main SaveFrom Downloader Hero */}
+        <SaveFromHero
+          onSubmit={handleFetchInfo}
+          isLoading={isLoading}
+          initialUrl={currentUrl}
+          activePlatform={selectedPlatform}
+        />
 
         {/* Results Area */}
         <section className="space-y-6">
@@ -150,65 +140,37 @@ export default function App() {
           {/* Loading Skeleton */}
           {isLoading && <LoadingSkeleton />}
 
-          {/* Extracted Video Information and Format Categories */}
+          {/* Extracted Video Information & Download Formats */}
           {metadata && formats && !isLoading && (
             <div className="space-y-6 animate-in fade-in-50 duration-300">
-              <VideoInfoCard metadata={metadata} />
-              <AudioPreviewPlayer metadata={metadata} videoUrl={currentUrl} />
-              <FormatCategoryList
+              <SaveFromResultCard
+                metadata={metadata}
                 formats={formats}
                 videoUrl={currentUrl}
-                videoTitle={metadata.title}
-                duration={metadata.duration}
-                artist={metadata.channel}
               />
             </div>
           )}
-
-          {/* Empty / Initial State features overview */}
-          {!metadata && !isLoading && !error && (
-            <div className="pt-4 grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div className="p-5 rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-left space-y-2 shadow-sm group hover:border-zinc-400 dark:hover:border-zinc-700 transition-colors">
-                <span className="text-[10px] font-mono font-bold uppercase tracking-widest text-zinc-500 block">
-                  [ 01 // FORMAT ]
-                </span>
-                <h3 className="font-black text-sm uppercase tracking-tight text-zinc-950 dark:text-zinc-100">
-                  Video + Audio Merged
-                </h3>
-                <p className="text-xs font-mono text-zinc-500 dark:text-zinc-400 leading-relaxed">
-                  1080p Full HD, 720p HD, and 480p standard MP4 files ready to play anywhere.
-                </p>
-              </div>
-
-              <div className="p-5 rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-left space-y-2 shadow-sm group hover:border-zinc-400 dark:hover:border-zinc-700 transition-colors">
-                <span className="text-[10px] font-mono font-bold uppercase tracking-widest text-zinc-500 block">
-                  [ 02 // AUDIO ]
-                </span>
-                <h3 className="font-black text-sm uppercase tracking-tight text-zinc-950 dark:text-zinc-100">
-                  Crystal Clear MP3
-                </h3>
-                <p className="text-xs font-mono text-zinc-500 dark:text-zinc-400 leading-relaxed">
-                  Instant conversion to 320 kbps, 192 kbps, and 128 kbps MP3 files or original AAC/M4A.
-                </p>
-              </div>
-
-              <div className="p-5 rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-left space-y-2 shadow-sm group hover:border-zinc-400 dark:hover:border-zinc-700 transition-colors">
-                <span className="text-[10px] font-mono font-bold uppercase tracking-widest text-zinc-500 block">
-                  [ 03 // PIPELINE ]
-                </span>
-                <h3 className="font-black text-sm uppercase tracking-tight text-zinc-950 dark:text-zinc-100">
-                  Zero Disk Retention
-                </h3>
-                <p className="text-xs font-mono text-zinc-500 dark:text-zinc-400 leading-relaxed">
-                  No queue, no file storage limits, and direct piping to your browser download manager.
-                </p>
-              </div>
-            </div>
-          )}
         </section>
+
+        {/* SaveFrom "ss" URL Shortcut & Extension promo */}
+        <SaveFromHelperPromo />
+
+        {/* How to Download Steps */}
+        <div id="how-to">
+          <SaveFromHowTo />
+        </div>
+
+        {/* SaveFrom Advantages & Features */}
+        <SaveFromFeatures />
+
+        {/* FAQ Accordion */}
+        <div id="faq">
+          <SaveFromFAQ />
+        </div>
       </main>
 
-      <Footer />
+      {/* SaveFrom Footer */}
+      <SaveFromFooter />
     </div>
   );
 }
