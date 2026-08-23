@@ -12,6 +12,7 @@ import { LoadingSkeleton } from './components/LoadingSkeleton.js';
 import { ErrorMessage } from './components/ErrorMessage.js';
 import { Footer } from './components/Footer.js';
 import { VideoMetadata, GroupedFormats, FetchInfoResponse } from './types.js';
+import { fetchMetadataClientSide } from './lib/clientExtractor.js';
 import { DownloadCloud, Sparkles, Zap, Shield } from 'lucide-react';
 
 export default function App() {
@@ -55,6 +56,7 @@ export default function App() {
     setCurrentUrl(url);
 
     try {
+      // First try the backend server API
       const res = await fetch('/api/fetch-info', {
         method: 'POST',
         headers: {
@@ -63,21 +65,32 @@ export default function App() {
         body: JSON.stringify({ url }),
       });
 
-      const data: FetchInfoResponse = await res.json();
-
-      if (!res.ok || !data.success) {
-        const errorData = data as { error?: string; errorCode?: any };
-        setError(errorData.error || 'Failed to extract video information.');
-        setErrorCode(errorData.errorCode || 'SERVER_ERROR');
-      } else {
-        setMetadata(data.metadata);
-        setFormats(data.formats);
+      if (res.ok) {
+        const data: FetchInfoResponse = await res.json();
+        if (data.success) {
+          setMetadata(data.metadata);
+          setFormats(data.formats);
+          return;
+        }
       }
+
+      // If backend responded with 404 or failed on static host (e.g. Vercel), fallback to client extractor
+      console.info('Backend /api/fetch-info not reachable or returned error, engaging client-side fallback engine...');
+      const fallbackResult = await fetchMetadataClientSide(url);
+      setMetadata(fallbackResult.metadata);
+      setFormats(fallbackResult.formats);
     } catch (err: any) {
-      setError(
-        'Unable to connect to the backend server. Please verify your connection or try again shortly.'
-      );
-      setErrorCode('SERVER_ERROR');
+      try {
+        // Double fallback if fetch thrown network exception
+        const fallbackResult = await fetchMetadataClientSide(url);
+        setMetadata(fallbackResult.metadata);
+        setFormats(fallbackResult.formats);
+      } catch (fallbackErr: any) {
+        setError(
+          fallbackErr.message || 'Failed to extract video information. Please ensure the link is a valid YouTube URL.'
+        );
+        setErrorCode('INVALID_URL');
+      }
     } finally {
       setIsLoading(false);
     }
